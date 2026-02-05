@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
   Chip,
   CircularProgress,
-  Grid,
   LinearProgress,
   MenuItem,
   Paper,
@@ -12,19 +11,21 @@ import {
   TextField,
   Typography,
   Alert,
+  IconButton,
+  Tooltip,
+  Divider,
 } from "@mui/material";
+
+import Grid from "@mui/material/Grid";
 import { PieChart, BarChart } from "@mui/x-charts";
-import { DataGrid } from "@mui/x-data-grid";
+import { DataGrid, GridToolbar } from "@mui/x-data-grid";
 import type { GridColDef } from "@mui/x-data-grid";
+
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
-import SearchIcon from "@mui/icons-material/Search";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import { IconButton, Tooltip, Divider } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
 import ImageIcon from "@mui/icons-material/Image";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
-import { GridToolbar } from "@mui/x-data-grid";
-import type { GridToolbarProps } from "@mui/x-data-grid";
+
 import ErrorBoundary from "./ui/ErrorBoundary";
 import { exportRefToPng } from "./ui/exportPng";
 import Papa from "papaparse";
@@ -35,7 +36,9 @@ import CardHeader from "./ui/CardHeader";
 import { api } from "./api";
 import type { ExploreResponse, Meta, PredictResponse } from "./api";
 
-function sentimentChipColor(s: string): "default" | "success" | "warning" | "error" | "info" {
+function sentimentChipColor(
+  s: string
+): "default" | "success" | "warning" | "error" | "info" {
   const x = (s || "").toLowerCase();
   if (x.includes("pos")) return "success";
   if (x.includes("neg")) return "error";
@@ -56,7 +59,9 @@ export default function App() {
   const [entity, setEntity] = useState("All");
   const [keyword, setKeyword] = useState("");
   const [sentiment, setSentiment] = useState("All");
-  const [wcSentiment, setWcSentiment] = useState<"Negative" | "Neutral" | "Positive">("Neutral");
+  const [wcSentiment, setWcSentiment] = useState<
+    "Negative" | "Neutral" | "Positive"
+  >("Neutral");
   const [explore, setExplore] = useState<ExploreResponse | null>(null);
   const [exploreLoading, setExploreLoading] = useState(false);
   const [exploreError, setExploreError] = useState<string | null>(null);
@@ -67,12 +72,12 @@ export default function App() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchFilename, setBatchFilename] = useState<string>("");
 
-  const distRef = useState<{ current: HTMLElement | null }>({ current: null })[0];
-  const topEntitiesRef = useState<{ current: HTMLElement | null }>({ current: null })[0];
-  const mixRef = useState<{ current: HTMLElement | null }>({ current: null })[0];
-  const posRef = useState<{ current: HTMLElement | null }>({ current: null })[0];
-  const negRef = useState<{ current: HTMLElement | null }>({ current: null })[0];
-
+  // Refs for PNG export (must be useRef, not useState)
+  const distRef = useRef<HTMLDivElement | null>(null);
+  const topEntitiesRef = useRef<HTMLDivElement | null>(null);
+  const mixRef = useRef<HTMLDivElement | null>(null);
+  const posRef = useRef<HTMLDivElement | null>(null);
+  const negRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     api.get("/meta").then((r) => setMeta(r.data));
@@ -81,7 +86,10 @@ export default function App() {
   // ---------- Single Prediction ----------
   const confidenceData = useMemo(() => {
     if (!pred?.classes || !pred?.probabilities) return null;
-    const rows = pred.classes.map((c, i) => ({ label: c, value: pred.probabilities![i] }));
+    const rows = pred.classes.map((c, i) => ({
+      label: c,
+      value: pred.probabilities![i],
+    }));
     return rows.sort((a, b) => b.value - a.value);
   }, [pred]);
 
@@ -100,40 +108,42 @@ export default function App() {
 
   // ---------- Explorer ----------
   async function runExplore() {
-  setExploreError(null);
-  setExploreLoading(true);
+    setExploreError(null);
+    setExploreLoading(true);
 
-  try {
-    const r = await api.post("/explore", {
-      entity,
-      keyword,
-      sentiment,
-      wc_sentiment: wcSentiment,
-      top_entities_n: 12,
-      leaderboard_n: 50,
-      sample_n: 200,
-    });
-    setExplore(r.data);
-  } catch (e: any) {
-    console.error(e);
-    setExploreError(e?.message || "Failed to load explorer analytics.");
-  } finally {
-    setExploreLoading(false);
+    try {
+      const r = await api.post("/explore", {
+        entity,
+        keyword,
+        sentiment,
+        wc_sentiment: wcSentiment,
+        top_entities_n: 12,
+        leaderboard_n: 50,
+        sample_n: 200,
+      });
+      setExplore(r.data);
+    } catch (e: any) {
+      console.error(e);
+      setExploreError(e?.message || "Failed to load explorer analytics.");
+    } finally {
+      setExploreLoading(false);
+    }
   }
-}
 
-function downloadFilteredSamplesCsv() {
-  const csv = Papa.unparse(filteredSampleRows.map(({ id, ...rest }: any) => rest));
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "filtered_samples.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-
+  // NOTE: this uses filteredSampleRows which is defined later via useMemo.
+  // It's safe because this function runs only on click (after render).
+  function downloadFilteredSamplesCsv() {
+    const csv = Papa.unparse(
+      filteredSampleRows.map(({ id, ...rest }: any) => rest)
+    );
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "filtered_samples.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // ---------- Batch ----------
   async function onBatchFile(file: File) {
@@ -144,7 +154,7 @@ function downloadFilteredSamplesCsv() {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: async (results) => {
+      complete: async (results: Papa.ParseResult<any>) => {
         const rows = (results.data as any[]).filter((r) => r && r.text);
         try {
           const texts = rows.map((r) => String(r.text));
@@ -179,45 +189,70 @@ function downloadFilteredSamplesCsv() {
   // ---------- Derived analytics (Explorer) ----------
   const explorerDist = useMemo(() => {
     if (!explore) return [];
-    return explore.distribution.map((d, i) => ({ id: i, label: d.sentiment, value: d.count }));
+    return explore.distribution.map((d, i) => ({
+      id: i,
+      label: d.sentiment,
+      value: d.count,
+    }));
   }, [explore]);
+
   // Derived: entity positivity score (pos - neg)
   const entityScores = useMemo(() => {
-  if (!explore) return [];
-  const map = new Map<string, { pos: number; neg: number; neu: number }>();
+    if (!explore) return [];
+    const map = new Map<string, { pos: number; neg: number; neu: number }>();
 
-  for (const m of explore.mix) {
-    if (!map.has(m.entity)) map.set(m.entity, { pos: 0, neg: 0, neu: 0 });
-    const row = map.get(m.entity)!;
-    if (m.sentiment === "Positive") row.pos = m.count;
-    if (m.sentiment === "Negative") row.neg = m.count;
-    if (m.sentiment === "Neutral") row.neu = m.count;
-  }
+    for (const m of explore.mix) {
+      if (!map.has(m.entity)) map.set(m.entity, { pos: 0, neg: 0, neu: 0 });
+      const row = map.get(m.entity)!;
+      if (m.sentiment === "Positive") row.pos = m.count;
+      if (m.sentiment === "Negative") row.neg = m.count;
+      if (m.sentiment === "Neutral") row.neu = m.count;
+    }
 
-  const out = Array.from(map.entries()).map(([entity, v]) => {
-    const total = v.pos + v.neg + v.neu || 1;
-    const positivity = v.pos / total;     // 0..1
-    const negativity = v.neg / total;     // 0..1
-    const score = (v.pos - v.neg) / total; // -1..1
-    return { entity, ...v, total, positivity, negativity, score };
-  });
+    const out = Array.from(map.entries()).map(([entity, v]) => {
+      const total = v.pos + v.neg + v.neu || 1;
+      const positivity = v.pos / total; // 0..1
+      const negativity = v.neg / total; // 0..1
+      const score = (v.pos - v.neg) / total; // -1..1
+      return { entity, ...v, total, positivity, negativity, score };
+    });
 
-  out.sort((a, b) => b.total - a.total);
-  return out;
-}, [explore]);
+    out.sort((a, b) => b.total - a.total);
+    return out;
+  }, [explore]);
 
-const topPositiveEntities = useMemo(() => entityScores.slice(0, 20).sort((a, b) => b.score - a.score).slice(0, 8), [entityScores]);
-const topNegativeEntities = useMemo(() => entityScores.slice(0, 20).sort((a, b) => a.score - b.score).slice(0, 8), [entityScores]);
+  const topPositiveEntities = useMemo(
+    () =>
+      entityScores
+        .slice(0, 20)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8),
+    [entityScores]
+  );
+  const topNegativeEntities = useMemo(
+    () =>
+      entityScores
+        .slice(0, 20)
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 8),
+    [entityScores]
+  );
 
-const topPosBar = useMemo(() => ({
-  labels: topPositiveEntities.map(x => x.entity),
-  values: topPositiveEntities.map(x => Math.round(x.score * 100)), // -100..100
-}), [topPositiveEntities]);
+  const topPosBar = useMemo(
+    () => ({
+      labels: topPositiveEntities.map((x) => x.entity),
+      values: topPositiveEntities.map((x) => Math.round(x.score * 100)), // -100..100
+    }),
+    [topPositiveEntities]
+  );
 
-const topNegBar = useMemo(() => ({
-  labels: topNegativeEntities.map(x => x.entity),
-  values: topNegativeEntities.map(x => Math.round(x.score * 100)),
-}), [topNegativeEntities]);
+  const topNegBar = useMemo(
+    () => ({
+      labels: topNegativeEntities.map((x) => x.entity),
+      values: topNegativeEntities.map((x) => Math.round(x.score * 100)),
+    }),
+    [topNegativeEntities]
+  );
 
   const topEntitiesBar = useMemo(() => {
     if (!explore) return { labels: [], values: [] as number[] };
@@ -227,11 +262,14 @@ const topNegBar = useMemo(() => ({
   }, [explore]);
 
   const explorerMix = useMemo(() => {
-    if (!explore) return { x: [] as string[], neg: [] as number[], neu: [] as number[], pos: [] as number[] };
+    if (!explore)
+      return { x: [] as string[], neg: [] as number[], neu: [] as number[], pos: [] as number[] };
+
     const entities = Array.from(new Set(explore.mix.map((m) => m.entity)));
     const map = new Map<string, Record<string, number>>();
     entities.forEach((e) => map.set(e, { Negative: 0, Neutral: 0, Positive: 0 }));
     explore.mix.forEach((m) => (map.get(m.entity)![m.sentiment] = m.count));
+
     return {
       x: entities,
       neg: entities.map((e) => map.get(e)!.Negative),
@@ -262,46 +300,60 @@ const topNegBar = useMemo(() => ({
   }, [explore]);
 
   const filteredSampleRows = useMemo(() => {
-  if (!sampleRows.length) return sampleRows;
-  const q = localSearch.trim().toLowerCase();
-  if (!q) return sampleRows;
+    if (!sampleRows.length) return sampleRows;
+    const q = localSearch.trim().toLowerCase();
+    if (!q) return sampleRows;
 
-  return sampleRows.filter((r: any) =>
-    String(r.text || "").toLowerCase().includes(q) ||
-    String(r.entity || "").toLowerCase().includes(q) ||
-    String(r.sentiment || "").toLowerCase().includes(q) ||
-    String(r.tweet_id || "").toLowerCase().includes(q)
-  );
-}, [sampleRows, localSearch]);
+    return sampleRows.filter((r: any) => {
+      const t = String(r.text || "").toLowerCase();
+      const e = String(r.entity || "").toLowerCase();
+      const s = String(r.sentiment || "").toLowerCase();
+      const id = String(r.tweet_id || "").toLowerCase();
+      return t.includes(q) || e.includes(q) || s.includes(q) || id.includes(q);
+    });
+  }, [sampleRows, localSearch]);
 
-const filteredLeaderboardRows = useMemo(() => {
-  if (!leaderboardRows.length) return leaderboardRows;
-  const q = localSearch.trim().toLowerCase();
-  if (!q) return leaderboardRows;
-  return leaderboardRows.filter((r: any) =>
-    String(r.entity || "").toLowerCase().includes(q)
-  );
-}, [leaderboardRows, localSearch]);
+  const filteredLeaderboardRows = useMemo(() => {
+    if (!leaderboardRows.length) return leaderboardRows;
+    const q = localSearch.trim().toLowerCase();
+    if (!q) return leaderboardRows;
+    return leaderboardRows.filter((r: any) =>
+      String(r.entity || "").toLowerCase().includes(q)
+    );
+  }, [leaderboardRows, localSearch]);
 
   const batchDist = useMemo(() => {
     if (!batchPredRows.length) return [];
     const counts: Record<string, number> = {};
-    for (const r of batchPredRows) counts[r.predicted_sentiment] = (counts[r.predicted_sentiment] || 0) + 1;
-    return Object.entries(counts).map(([label, value], i) => ({ id: i, label, value }));
+    for (const r of batchPredRows) {
+      const k = r.predicted_sentiment;
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    return Object.entries(counts).map(([label, value], i) => ({
+      id: i,
+      label,
+      value,
+    }));
   }, [batchPredRows]);
 
   // ---------- Columns ----------
-  const leaderboardCols: GridColDef[] = useMemo(() => ([
-    { field: "entity", headerName: "Entity", flex: 1, minWidth: 220 },
-    { field: "mentions", headerName: "Mentions", width: 140 },
-  ]), []);
+  const leaderboardCols: GridColDef[] = useMemo(
+    () => [
+      { field: "entity", headerName: "Entity", flex: 1, minWidth: 220 },
+      { field: "mentions", headerName: "Mentions", width: 140 },
+    ],
+    []
+  );
 
-  const sampleCols: GridColDef[] = useMemo(() => ([
-    { field: "tweet_id", headerName: "Tweet ID", width: 140 },
-    { field: "entity", headerName: "Entity", width: 160 },
-    { field: "sentiment", headerName: "Sentiment", width: 140 },
-    { field: "text", headerName: "Text", flex: 1, minWidth: 420 },
-  ]), []);
+  const sampleCols: GridColDef[] = useMemo(
+    () => [
+      { field: "tweet_id", headerName: "Tweet ID", width: 140 },
+      { field: "entity", headerName: "Entity", width: 160 },
+      { field: "sentiment", headerName: "Sentiment", width: 140 },
+      { field: "text", headerName: "Text", flex: 1, minWidth: 420 },
+    ],
+    []
+  );
 
   const batchCols: GridColDef[] = useMemo(() => {
     if (!batchPredRows.length) return [];
@@ -343,89 +395,119 @@ const filteredLeaderboardRows = useMemo(() => {
           {/* ================= SINGLE ================= */}
           {active === "single" && (
             <Grid container spacing={2.2}>
-              <Grid item xs={12} md={8}>
-              <Paper sx={{ p: 2.6 }}>
-              <CardHeader
-              title="Single Tweet Prediction"
-              subtitle="Analyze one tweet and view confidence scores"
-              />
+              <Grid xs={12} md={8}>
+                <Paper sx={{ p: 2.6 }}>
+                  <CardHeader
+                    title="Single Tweet Prediction"
+                    subtitle="Analyze one tweet and view confidence scores"
+                  />
 
-              <TextField
-              fullWidth
-              multiline
-              minRows={6}
-              placeholder="Type or paste a tweet here…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              sx={{ mt: 1.5 }}
-              />
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={6}
+                    placeholder="Type or paste a tweet here…"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    sx={{ mt: 1.5 }}
+                  />
 
-              <Stack direction="row" spacing={1.5} sx={{ mt: 2 }} alignItems="center">
-              <Button
-              variant="contained"
-              size="large"
-              onClick={runPredict}
-              disabled={!text.trim() || predLoading}
-      >
-              Analyze sentiment
-              </Button>
+                  <Stack
+                    direction="row"
+                    spacing={1.5}
+                    sx={{ mt: 2 }}
+                    alignItems="center"
+                  >
+                    <Button
+                      variant="contained"
+                      size="large"
+                      onClick={runPredict}
+                      disabled={!text.trim() || predLoading}
+                    >
+                      Analyze sentiment
+                    </Button>
 
-              {predLoading && <CircularProgress size={22} />}
-              </Stack>
+                    {predLoading && <CircularProgress size={22} />}
+                  </Stack>
 
-              {pred && (
-              <Paper
-              variant="outlined"
-              sx={{
-              mt: 2.5,
-              p: 2.2,
-              bgcolor: "#F8FAFC",
-              borderRadius: 2,
-              }}
-      >
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
-              <Typography sx={{ fontWeight: 900 }}>Prediction</Typography>
-              <Chip
-            label={pred.sentiment}
-            color={sentimentChipColor(pred.sentiment)}
-          />
-        </Stack>
+                  {pred && (
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        mt: 2.5,
+                        p: 2.2,
+                        bgcolor: "#F8FAFC",
+                        borderRadius: 2,
+                      }}
+                    >
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        sx={{ mb: 1.5 }}
+                      >
+                        <Typography sx={{ fontWeight: 900 }}>
+                          Prediction
+                        </Typography>
+                        <Chip
+                          label={pred.sentiment}
+                          color={sentimentChipColor(pred.sentiment)}
+                        />
+                      </Stack>
 
-        {confidenceData && (
-          <Stack spacing={1.4}>
-            {confidenceData.map((r) => (
-              <Box key={r.label}>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">{r.label}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {(r.value * 100).toFixed(1)}%
-                  </Typography>
-                </Stack>
-                <LinearProgress
-                  variant="determinate"
-                  value={r.value * 100}
-                  sx={{ height: 10, borderRadius: 999 }}
-                />
-              </Box>
-            ))}
-          </Stack>
-        )}
-      </Paper>
-    )}
-  </Paper>
-</Grid>
+                      {confidenceData && (
+                        <Stack spacing={1.4}>
+                          {confidenceData.map((r) => (
+                            <Box key={r.label}>
+                              <Stack
+                                direction="row"
+                                justifyContent="space-between"
+                              >
+                                <Typography variant="body2">
+                                  {r.label}
+                                </Typography>
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                >
+                                  {(r.value * 100).toFixed(1)}%
+                                </Typography>
+                              </Stack>
+                              <LinearProgress
+                                variant="determinate"
+                                value={r.value * 100}
+                                sx={{ height: 10, borderRadius: 999 }}
+                              />
+                            </Box>
+                          ))}
+                        </Stack>
+                      )}
+                    </Paper>
+                  )}
+                </Paper>
+              </Grid>
 
-              <Grid item xs={12} md={4}>
+              <Grid xs={12} md={4}>
                 <Paper sx={{ p: 2.4 }}>
                   <CardHeader title="Tips" subtitle="Examples + what to try" />
-                  <Paper variant="outlined" sx={{ p: 2, bgcolor: "#F8FAFC", borderStyle: "dashed" }}>
-                    <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                  <Paper
+                    variant="outlined"
+                    sx={{ p: 2, bgcolor: "#F8FAFC", borderStyle: "dashed" }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{ fontFamily: "monospace" }}
+                    >
                       I love this product! <br />
                       This is okay, not bad. <br />
                       I hate how this works.
                     </Typography>
                   </Paper>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mt: 2 }}
+                  >
                     Model: TF-IDF + Logistic Regression (fast & explainable)
                   </Typography>
                 </Paper>
@@ -435,316 +517,494 @@ const filteredLeaderboardRows = useMemo(() => {
 
           {/* ================= EXPLORER ================= */}
           {active === "explorer" && (
-  <ErrorBoundary>
-    <Grid container spacing={2.2}>
-      {/* Filters + Search */}
-      <Grid item xs={12}>
-        <Paper sx={{ p: 2.4 }}>
-          <CardHeader
-            title="Dataset Explorer"
-            subtitle="Analytics, KPIs, entity insights, and searchable rows"
-            right={
-              <Stack direction="row" spacing={1}>
-                <Button
-                  variant="outlined"
-                  startIcon={<DownloadIcon />}
-                  onClick={downloadFilteredSamplesCsv}
-                  disabled={!explore || filteredSampleRows.length === 0}
-                >
-                  Export Samples CSV
-                </Button>
-                <Button
-                  variant="contained"
-                  startIcon={<FilterAltIcon />}
-                  onClick={runExplore}
-                  disabled={exploreLoading}
-                >
-                  Apply
-                </Button>
-              </Stack>
-            }
-          />
+            <ErrorBoundary>
+              <Grid container spacing={2.2}>
+                {/* Filters + Search */}
+                <Grid xs={12}>
+                  <Paper sx={{ p: 2.4 }}>
+                    <CardHeader
+                      title="Dataset Explorer"
+                      subtitle="Analytics, KPIs, entity insights, and searchable rows"
+                      right={
+                        <Stack direction="row" spacing={1}>
+                          <Button
+                            variant="outlined"
+                            startIcon={<DownloadIcon />}
+                            onClick={downloadFilteredSamplesCsv}
+                            disabled={!explore || filteredSampleRows.length === 0}
+                          >
+                            Export Samples CSV
+                          </Button>
+                          <Button
+                            variant="contained"
+                            startIcon={<FilterAltIcon />}
+                            onClick={runExplore}
+                            disabled={exploreLoading}
+                          >
+                            Apply
+                          </Button>
+                        </Stack>
+                      }
+                    />
 
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={3}>
-              <TextField select fullWidth label="Entity" value={entity} onChange={(e) => setEntity(e.target.value)}>
-                <MenuItem value="All">All</MenuItem>
-                {meta.entities.map((e) => (
-                  <MenuItem key={e} value={e}>{e}</MenuItem>
-                ))}
-              </TextField>
-            </Grid>
+                    <Grid container spacing={2}>
+                      <Grid xs={12} md={3}>
+                        <TextField
+                          select
+                          fullWidth
+                          label="Entity"
+                          value={entity}
+                          onChange={(e) => setEntity(e.target.value)}
+                        >
+                          <MenuItem value="All">All</MenuItem>
+                          {meta.entities.map((e) => (
+                            <MenuItem key={e} value={e}>
+                              {e}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      </Grid>
 
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="Keyword (server filter)"
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                placeholder="Filters server-side…"
-              />
-            </Grid>
+                      <Grid xs={12} md={3}>
+                        <TextField
+                          fullWidth
+                          label="Keyword (server filter)"
+                          value={keyword}
+                          onChange={(e) => setKeyword(e.target.value)}
+                          placeholder="Filters server-side…"
+                        />
+                      </Grid>
 
-            <Grid item xs={12} md={2}>
-              <TextField select fullWidth label="Sentiment" value={sentiment} onChange={(e) => setSentiment(e.target.value)}>
-                {meta.sentiments.map((s) => (
-                  <MenuItem key={s} value={s}>{s}</MenuItem>
-                ))}
-              </TextField>
-            </Grid>
+                      <Grid xs={12} md={2}>
+                        <TextField
+                          select
+                          fullWidth
+                          label="Sentiment"
+                          value={sentiment}
+                          onChange={(e) => setSentiment(e.target.value)}
+                        >
+                          {meta.sentiments.map((s) => (
+                            <MenuItem key={s} value={s}>
+                              {s}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      </Grid>
 
-            <Grid item xs={12} md={2}>
-              <TextField select fullWidth label="WordCloud" value={wcSentiment} onChange={(e) => setWcSentiment(e.target.value as any)}>
-                <MenuItem value="Negative">Negative</MenuItem>
-                <MenuItem value="Neutral">Neutral</MenuItem>
-                <MenuItem value="Positive">Positive</MenuItem>
-              </TextField>
-            </Grid>
+                      <Grid xs={12} md={2}>
+                        <TextField
+                          select
+                          fullWidth
+                          label="WordCloud"
+                          value={wcSentiment}
+                          onChange={(e) =>
+                            setWcSentiment(e.target.value as any)
+                          }
+                        >
+                          <MenuItem value="Negative">Negative</MenuItem>
+                          <MenuItem value="Neutral">Neutral</MenuItem>
+                          <MenuItem value="Positive">Positive</MenuItem>
+                        </TextField>
+                      </Grid>
 
-            <Grid item xs={12} md={2}>
-              <TextField
-                fullWidth
-                label="Search (local)"
-                value={localSearch}
-                onChange={(e) => setLocalSearch(e.target.value)}
-                placeholder="Search tables instantly…"
-              />
-            </Grid>
-          </Grid>
+                      <Grid xs={12} md={2}>
+                        <TextField
+                          fullWidth
+                          label="Search (local)"
+                          value={localSearch}
+                          onChange={(e) => setLocalSearch(e.target.value)}
+                          placeholder="Search tables instantly…"
+                        />
+                      </Grid>
+                    </Grid>
 
-          {exploreLoading && <Box sx={{ mt: 2 }}><LinearProgress /></Box>}
-          {exploreError && <Box sx={{ mt: 2 }}><Alert severity="error">{exploreError}</Alert></Box>}
-        </Paper>
-      </Grid>
+                    {exploreLoading && (
+                      <Box sx={{ mt: 2 }}>
+                        <LinearProgress />
+                      </Box>
+                    )}
+                    {exploreError && (
+                      <Box sx={{ mt: 2 }}>
+                        <Alert severity="error">{exploreError}</Alert>
+                      </Box>
+                    )}
+                  </Paper>
+                </Grid>
 
-      {!explore && !exploreLoading && !exploreError && (
-        <Grid item xs={12}>
-          <Paper sx={{ p: 2.4 }}>
-            <Alert severity="info">Click <b>Apply</b> to load analytics.</Alert>
-          </Paper>
-        </Grid>
-      )}
-
-      {explore && (
-        <>
-          {/* KPI cards */}
-          <Grid item xs={12} md={3}><StatCard label="Rows (filtered)" value={explore.total_rows.toLocaleString()} hint="records in view" /></Grid>
-          <Grid item xs={12} md={3}><StatCard label="Top entity" value={explore.top_entity || "—"} hint="most frequent topic" /></Grid>
-          <Grid item xs={12} md={3}><StatCard label="Neutral share" value={`${(explore.share_neutral * 100).toFixed(1)}%`} /></Grid>
-          <Grid item xs={12} md={3}><StatCard label="Positive share" value={`${(explore.share_positive * 100).toFixed(1)}%`} /></Grid>
-
-          {/* Charts Row 1 */}
-          <Grid item xs={12} md={5}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader
-                title="Sentiment Distribution"
-                subtitle="Counts by class"
-                right={
-                  <Tooltip title="Export PNG">
-                    <IconButton onClick={() => exportRefToPng(distRef.current, "sentiment_distribution.png")}>
-                      <ImageIcon />
-                    </IconButton>
-                  </Tooltip>
-                }
-              />
-              <Box ref={(n) => (distRef.current = n)} sx={{ bgcolor: "white", borderRadius: 2 }}>
-                {explorerDist.length ? (
-                  <PieChart height={320} series={[{ data: explorerDist, innerRadius: 78 }]} />
-                ) : (
-                  <Alert severity="info">No data.</Alert>
+                {!explore && !exploreLoading && !exploreError && (
+                  <Grid xs={12}>
+                    <Paper sx={{ p: 2.4 }}>
+                      <Alert severity="info">
+                        Click <b>Apply</b> to load analytics.
+                      </Alert>
+                    </Paper>
+                  </Grid>
                 )}
-              </Box>
-            </Paper>
-          </Grid>
 
-          <Grid item xs={12} md={7}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader
-                title="Top Entities"
-                subtitle="Most mentioned"
-                right={
-                  <Tooltip title="Export PNG">
-                    <IconButton onClick={() => exportRefToPng(topEntitiesRef.current, "top_entities.png")}>
-                      <ImageIcon />
-                    </IconButton>
-                  </Tooltip>
-                }
-              />
-              <Box ref={(n) => (topEntitiesRef.current = n)} sx={{ bgcolor: "white", borderRadius: 2 }}>
-                {topEntitiesBar.labels.length ? (
-                  <BarChart
-                    height={320}
-                    xAxis={[{ scaleType: "band", data: topEntitiesBar.labels }]}
-                    series={[{ data: topEntitiesBar.values, label: "Mentions" }]}
-                  />
-                ) : (
-                  <Alert severity="info">No entities available for this filter.</Alert>
+                {explore && (
+                  <>
+                    {/* KPI cards */}
+                    <Grid xs={12} md={3}>
+                      <StatCard
+                        label="Rows (filtered)"
+                        value={explore.total_rows.toLocaleString()}
+                        hint="records in view"
+                      />
+                    </Grid>
+                    <Grid xs={12} md={3}>
+                      <StatCard
+                        label="Top entity"
+                        value={explore.top_entity || "—"}
+                        hint="most frequent topic"
+                      />
+                    </Grid>
+                    <Grid xs={12} md={3}>
+                      <StatCard
+                        label="Neutral share"
+                        value={`${(explore.share_neutral * 100).toFixed(1)}%`}
+                      />
+                    </Grid>
+                    <Grid xs={12} md={3}>
+                      <StatCard
+                        label="Positive share"
+                        value={`${(explore.share_positive * 100).toFixed(1)}%`}
+                      />
+                    </Grid>
+
+                    {/* Charts Row 1 */}
+                    <Grid xs={12} md={5}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Sentiment Distribution"
+                          subtitle="Counts by class"
+                          right={
+                            <Tooltip title="Export PNG">
+                              <IconButton
+                                onClick={() =>
+                                  distRef.current &&
+                                  exportRefToPng(
+                                    distRef.current,
+                                    "sentiment_distribution.png"
+                                  )
+                                }
+                              >
+                                <ImageIcon />
+                              </IconButton>
+                            </Tooltip>
+                          }
+                        />
+                        <Box
+                          ref={distRef}
+                          sx={{ bgcolor: "white", borderRadius: 2 }}
+                        >
+                          {explorerDist.length ? (
+                            <PieChart
+                              height={320}
+                              series={[
+                                { data: explorerDist, innerRadius: 78 },
+                              ]}
+                            />
+                          ) : (
+                            <Alert severity="info">No data.</Alert>
+                          )}
+                        </Box>
+                      </Paper>
+                    </Grid>
+
+                    <Grid xs={12} md={7}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Top Entities"
+                          subtitle="Most mentioned"
+                          right={
+                            <Tooltip title="Export PNG">
+                              <IconButton
+                                onClick={() =>
+                                  topEntitiesRef.current &&
+                                  exportRefToPng(
+                                    topEntitiesRef.current,
+                                    "top_entities.png"
+                                  )
+                                }
+                              >
+                                <ImageIcon />
+                              </IconButton>
+                            </Tooltip>
+                          }
+                        />
+                        <Box
+                          ref={topEntitiesRef}
+                          sx={{ bgcolor: "white", borderRadius: 2 }}
+                        >
+                          {topEntitiesBar.labels.length ? (
+                            <BarChart
+                              height={320}
+                              xAxis={[
+                                {
+                                  scaleType: "band",
+                                  data: topEntitiesBar.labels,
+                                },
+                              ]}
+                              series={[
+                                { data: topEntitiesBar.values, label: "Mentions" },
+                              ]}
+                            />
+                          ) : (
+                            <Alert severity="info">
+                              No entities available for this filter.
+                            </Alert>
+                          )}
+                        </Box>
+                      </Paper>
+                    </Grid>
+
+                    {/* Charts Row 2 */}
+                    <Grid xs={12} md={7}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Entity Sentiment Mix"
+                          subtitle="Stacked breakdown (top entities)"
+                          right={
+                            <Tooltip title="Export PNG">
+                              <IconButton
+                                onClick={() =>
+                                  mixRef.current &&
+                                  exportRefToPng(
+                                    mixRef.current,
+                                    "entity_sentiment_mix.png"
+                                  )
+                                }
+                              >
+                                <ImageIcon />
+                              </IconButton>
+                            </Tooltip>
+                          }
+                        />
+                        <Box
+                          ref={mixRef}
+                          sx={{ bgcolor: "white", borderRadius: 2 }}
+                        >
+                          {explorerMix.x.length ? (
+                            <BarChart
+                              height={320}
+                              xAxis={[
+                                { scaleType: "band", data: explorerMix.x },
+                              ]}
+                              series={[
+                                {
+                                  label: "Negative",
+                                  data: explorerMix.neg,
+                                  stack: "a",
+                                },
+                                {
+                                  label: "Neutral",
+                                  data: explorerMix.neu,
+                                  stack: "a",
+                                },
+                                {
+                                  label: "Positive",
+                                  data: explorerMix.pos,
+                                  stack: "a",
+                                },
+                              ]}
+                            />
+                          ) : (
+                            <Alert severity="info">No mix data.</Alert>
+                          )}
+                        </Box>
+                      </Paper>
+                    </Grid>
+
+                    <Grid xs={12} md={5}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="WordCloud"
+                          subtitle={`From: ${wcSentiment}`}
+                        />
+                        {explore.wordcloud_png_base64 ? (
+                          <img
+                            alt="wordcloud"
+                            style={{
+                              width: "100%",
+                              borderRadius: 14,
+                              border: "1px solid rgba(15,23,42,0.10)",
+                              background: "white",
+                            }}
+                            src={`data:image/png;base64,${explore.wordcloud_png_base64}`}
+                          />
+                        ) : (
+                          <Alert severity="info">
+                            Not enough text to generate wordcloud.
+                          </Alert>
+                        )}
+
+                        <Divider sx={{ my: 2 }} />
+
+                        <CardHeader
+                          title="Sentiment Index"
+                          subtitle="(Positive − Negative) / Total"
+                          right={<Chip label={sentimentIndex.toFixed(2)} />}
+                        />
+                        <LinearProgress
+                          variant="determinate"
+                          value={((sentimentIndex + 1) / 2) * 100}
+                          sx={{ height: 14, borderRadius: 999, mt: 1 }}
+                        />
+                      </Paper>
+                    </Grid>
+
+                    {/* New charts: Top Positive / Top Negative entities */}
+                    <Grid xs={12} md={6}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Most Positive Entities"
+                          subtitle="Score: (pos−neg)/total"
+                          right={
+                            <Tooltip title="Export PNG">
+                              <IconButton
+                                onClick={() =>
+                                  posRef.current &&
+                                  exportRefToPng(
+                                    posRef.current,
+                                    "most_positive_entities.png"
+                                  )
+                                }
+                              >
+                                <ImageIcon />
+                              </IconButton>
+                            </Tooltip>
+                          }
+                        />
+                        <Box
+                          ref={posRef}
+                          sx={{ bgcolor: "white", borderRadius: 2 }}
+                        >
+                          {topPosBar.labels.length ? (
+                            <BarChart
+                              height={300}
+                              xAxis={[
+                                { scaleType: "band", data: topPosBar.labels },
+                              ]}
+                              series={[
+                                {
+                                  data: topPosBar.values,
+                                  label: "Score (×100)",
+                                },
+                              ]}
+                            />
+                          ) : (
+                            <Alert severity="info">Not enough entities.</Alert>
+                          )}
+                        </Box>
+                      </Paper>
+                    </Grid>
+
+                    <Grid xs={12} md={6}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Most Negative Entities"
+                          subtitle="Score: (pos−neg)/total"
+                          right={
+                            <Tooltip title="Export PNG">
+                              <IconButton
+                                onClick={() =>
+                                  negRef.current &&
+                                  exportRefToPng(
+                                    negRef.current,
+                                    "most_negative_entities.png"
+                                  )
+                                }
+                              >
+                                <ImageIcon />
+                              </IconButton>
+                            </Tooltip>
+                          }
+                        />
+                        <Box
+                          ref={negRef}
+                          sx={{ bgcolor: "white", borderRadius: 2 }}
+                        >
+                          {topNegBar.labels.length ? (
+                            <BarChart
+                              height={300}
+                              xAxis={[
+                                { scaleType: "band", data: topNegBar.labels },
+                              ]}
+                              series={[
+                                {
+                                  data: topNegBar.values,
+                                  label: "Score (×100)",
+                                },
+                              ]}
+                            />
+                          ) : (
+                            <Alert severity="info">Not enough entities.</Alert>
+                          )}
+                        </Box>
+                      </Paper>
+                    </Grid>
+
+                    {/* Tables */}
+                    <Grid xs={12} md={5}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Leaderboard"
+                          subtitle="Top entities (mentions)"
+                        />
+                        <Box sx={{ height: 520 }}>
+                          <DataGrid
+                            rows={filteredLeaderboardRows}
+                            columns={leaderboardCols}
+                            disableRowSelectionOnClick
+                            pageSizeOptions={[10, 20, 50]}
+                            initialState={{
+                              pagination: {
+                                paginationModel: { pageSize: 20, page: 0 },
+                              },
+                            }}
+                            slots={{ toolbar: GridToolbar as any }}
+                          />
+                        </Box>
+                      </Paper>
+                    </Grid>
+
+                    <Grid xs={12} md={7}>
+                      <Paper sx={{ p: 2.4 }}>
+                        <CardHeader
+                          title="Sample Rows"
+                          subtitle="Searchable preview (local search applies)"
+                        />
+                        <Box sx={{ height: 520 }}>
+                          <DataGrid
+                            rows={filteredSampleRows}
+                            columns={sampleCols}
+                            disableRowSelectionOnClick
+                            pageSizeOptions={[10, 25, 50, 100]}
+                            initialState={{
+                              pagination: {
+                                paginationModel: { pageSize: 25, page: 0 },
+                              },
+                            }}
+                            slots={{ toolbar: GridToolbar as any }}
+                          />
+                        </Box>
+                      </Paper>
+                    </Grid>
+                  </>
                 )}
-              </Box>
-            </Paper>
-          </Grid>
-
-          {/* Charts Row 2 */}
-          <Grid item xs={12} md={7}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader
-                title="Entity Sentiment Mix"
-                subtitle="Stacked breakdown (top entities)"
-                right={
-                  <Tooltip title="Export PNG">
-                    <IconButton onClick={() => exportRefToPng(mixRef.current, "entity_sentiment_mix.png")}>
-                      <ImageIcon />
-                    </IconButton>
-                  </Tooltip>
-                }
-              />
-              <Box ref={(n) => (mixRef.current = n)} sx={{ bgcolor: "white", borderRadius: 2 }}>
-                {explorerMix.x.length ? (
-                  <BarChart
-                    height={320}
-                    xAxis={[{ scaleType: "band", data: explorerMix.x }]}
-                    series={[
-                      { label: "Negative", data: explorerMix.neg, stack: "a" },
-                      { label: "Neutral", data: explorerMix.neu, stack: "a" },
-                      { label: "Positive", data: explorerMix.pos, stack: "a" },
-                    ]}
-                  />
-                ) : (
-                  <Alert severity="info">No mix data.</Alert>
-                )}
-              </Box>
-            </Paper>
-          </Grid>
-
-          <Grid item xs={12} md={5}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader title="WordCloud" subtitle={`From: ${wcSentiment}`} />
-              {explore.wordcloud_png_base64 ? (
-                <img
-                  alt="wordcloud"
-                  style={{
-                    width: "100%",
-                    borderRadius: 14,
-                    border: "1px solid rgba(15,23,42,0.10)",
-                    background: "white",
-                  }}
-                  src={`data:image/png;base64,${explore.wordcloud_png_base64}`}
-                />
-              ) : (
-                <Alert severity="info">Not enough text to generate wordcloud.</Alert>
-              )}
-
-              <Divider sx={{ my: 2 }} />
-
-              <CardHeader title="Sentiment Index" subtitle="(Positive − Negative) / Total" right={<Chip label={sentimentIndex.toFixed(2)} />} />
-              <LinearProgress
-                variant="determinate"
-                value={((sentimentIndex + 1) / 2) * 100}
-                sx={{ height: 14, borderRadius: 999, mt: 1 }}
-              />
-            </Paper>
-          </Grid>
-
-          {/* New charts: Top Positive / Top Negative entities */}
-          <Grid item xs={12} md={6}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader
-                title="Most Positive Entities"
-                subtitle="Score: (pos−neg)/total"
-                right={
-                  <Tooltip title="Export PNG">
-                    <IconButton onClick={() => exportRefToPng(posRef.current, "most_positive_entities.png")}>
-                      <ImageIcon />
-                    </IconButton>
-                  </Tooltip>
-                }
-              />
-              <Box ref={(n) => (posRef.current = n)} sx={{ bgcolor: "white", borderRadius: 2 }}>
-                {topPosBar.labels.length ? (
-                  <BarChart
-                    height={300}
-                    xAxis={[{ scaleType: "band", data: topPosBar.labels }]}
-                    series={[{ data: topPosBar.values, label: "Score (×100)" }]}
-                  />
-                ) : (
-                  <Alert severity="info">Not enough entities.</Alert>
-                )}
-              </Box>
-            </Paper>
-          </Grid>
-
-          <Grid item xs={12} md={6}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader
-                title="Most Negative Entities"
-                subtitle="Score: (pos−neg)/total"
-                right={
-                  <Tooltip title="Export PNG">
-                    <IconButton onClick={() => exportRefToPng(negRef.current, "most_negative_entities.png")}>
-                      <ImageIcon />
-                    </IconButton>
-                  </Tooltip>
-                }
-              />
-              <Box ref={(n) => (negRef.current = n)} sx={{ bgcolor: "white", borderRadius: 2 }}>
-                {topNegBar.labels.length ? (
-                  <BarChart
-                    height={300}
-                    xAxis={[{ scaleType: "band", data: topNegBar.labels }]}
-                    series={[{ data: topNegBar.values, label: "Score (×100)" }]}
-                  />
-                ) : (
-                  <Alert severity="info">Not enough entities.</Alert>
-                )}
-              </Box>
-            </Paper>
-          </Grid>
-
-          {/* Tables: filled screen, searchable */}
-          <Grid item xs={12} md={5}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader title="Leaderboard" subtitle="Top entities (mentions)" />
-              <Box sx={{ height: 520 }}>
-                <DataGrid
-                  rows={filteredLeaderboardRows}
-                  columns={leaderboardCols}
-                  disableRowSelectionOnClick
-                  pageSizeOptions={[10, 20, 50]}
-                  initialState={{ pagination: { paginationModel: { pageSize: 20, page: 0 } } }}
-                  slots={{ toolbar: GridToolbar as any }}
-                />
-              </Box>
-            </Paper>
-          </Grid>
-
-          <Grid item xs={12} md={7}>
-            <Paper sx={{ p: 2.4 }}>
-              <CardHeader title="Sample Rows" subtitle="Searchable preview (local search applies)" />
-              <Box sx={{ height: 520 }}>
-                <DataGrid
-                  rows={filteredSampleRows}
-                  columns={sampleCols}
-                  disableRowSelectionOnClick
-                  pageSizeOptions={[10, 25, 50, 100]}
-                  initialState={{ pagination: { paginationModel: { pageSize: 25, page: 0 } } }}
-                  slots={{ toolbar: GridToolbar as any }}
-                />
-              </Box>
-            </Paper>
-          </Grid>
-        </>
-      )}
-    </Grid>
-  </ErrorBoundary>
-)}
-
+              </Grid>
+            </ErrorBoundary>
+          )}
 
           {/* ================= BATCH ================= */}
           {active === "batch" && (
             <Grid container spacing={2.2}>
-              <Grid item xs={12}>
+              <Grid xs={12}>
                 <Paper sx={{ p: 2.4 }}>
-                  <CardHeader title="Batch CSV Prediction" subtitle="Upload a CSV with column: text → download enriched CSV" />
+                  <CardHeader
+                    title="Batch CSV Prediction"
+                    subtitle="Upload a CSV with column: text → download enriched CSV"
+                  />
 
                   <Paper
                     variant="outlined"
@@ -763,11 +1023,18 @@ const filteredLeaderboardRows = useMemo(() => {
                       <Stack>
                         <Typography sx={{ fontWeight: 900 }}>Upload CSV</Typography>
                         <Typography variant="body2" color="text.secondary">
-                          {batchFilename ? `Selected: ${batchFilename}` : "Choose a file to run batch predictions."}
+                          {batchFilename
+                            ? `Selected: ${batchFilename}`
+                            : "Choose a file to run batch predictions."}
                         </Typography>
                       </Stack>
 
-                      <Button variant="contained" component="label" startIcon={<CloudUploadIcon />} disabled={batchLoading}>
+                      <Button
+                        variant="contained"
+                        component="label"
+                        startIcon={<CloudUploadIcon />}
+                        disabled={batchLoading}
+                      >
                         Select file
                         <input
                           hidden
@@ -792,21 +1059,34 @@ const filteredLeaderboardRows = useMemo(() => {
 
               {batchPredRows.length > 0 && (
                 <>
-                  <Grid item xs={12} md={4}>
+                  <Grid xs={12} md={4}>
                     <Paper sx={{ p: 2.4 }}>
                       <CardHeader
                         title="Distribution"
                         subtitle="Predicted sentiment breakdown"
-                        right={<Chip label={`${batchPredRows.length} rows`} variant="outlined" />}
+                        right={
+                          <Chip
+                            label={`${batchPredRows.length} rows`}
+                            variant="outlined"
+                          />
+                        }
                       />
-                      <PieChart height={320} series={[{ data: batchDist, innerRadius: 78 }]} />
-                      <Button sx={{ mt: 1.5 }} fullWidth variant="outlined" onClick={downloadCSV}>
+                      <PieChart
+                        height={320}
+                        series={[{ data: batchDist, innerRadius: 78 }]}
+                      />
+                      <Button
+                        sx={{ mt: 1.5 }}
+                        fullWidth
+                        variant="outlined"
+                        onClick={downloadCSV}
+                      >
                         Download CSV
                       </Button>
                     </Paper>
                   </Grid>
 
-                  <Grid item xs={12} md={8}>
+                  <Grid xs={12} md={8}>
                     <Paper sx={{ p: 2.4 }}>
                       <CardHeader title="Preview" subtitle="First 200 rows" />
                       <Box sx={{ height: 520 }}>
@@ -815,7 +1095,11 @@ const filteredLeaderboardRows = useMemo(() => {
                           columns={batchCols}
                           disableRowSelectionOnClick
                           pageSizeOptions={[25, 50, 100]}
-                          initialState={{ pagination: { paginationModel: { pageSize: 25, page: 0 } } }}
+                          initialState={{
+                            pagination: {
+                              paginationModel: { pageSize: 25, page: 0 },
+                            },
+                          }}
                         />
                       </Box>
                     </Paper>
