@@ -16,7 +16,7 @@ import {
   Divider,
 } from "@mui/material";
 
-import Grid from "@mui/material/Grid";
+import Grid from "@mui/material/Grid2";
 import { PieChart, BarChart } from "@mui/x-charts";
 import { DataGrid, GridToolbar } from "@mui/x-data-grid";
 import type { GridColDef } from "@mui/x-data-grid";
