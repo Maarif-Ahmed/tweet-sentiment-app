@@ -2,23 +2,22 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 from pathlib import Path
 from typing import Any, Literal
 
 import joblib
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from wordcloud import WordCloud
-import matplotlib.pyplot as plt
-
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "artifacts" / "models" / "prototype_logreg.joblib"
 DATA_PATH = ROOT / "data" / "data_processed" / "prototype_dataset.csv"
-
 
 # -----------------------------
 # Load model + dataset once
@@ -26,9 +25,6 @@ DATA_PATH = ROOT / "data" / "data_processed" / "prototype_dataset.csv"
 model = joblib.load(MODEL_PATH)
 
 df = pd.read_csv(DATA_PATH)
-# Expected columns from your pipeline:
-# tweet_id, entity, sentiment, text, clean_text
-# If any are missing, you can adapt below.
 for col in ["tweet_id", "entity", "sentiment", "text", "clean_text"]:
     if col not in df.columns:
         raise RuntimeError(f"Dataset missing required column: {col}")
@@ -58,11 +54,7 @@ def safe_predict_proba(texts: list[str]) -> tuple[list[str] | None, np.ndarray |
     return None, None
 
 
-def apply_filters(
-    entity: str | None,
-    keyword: str | None,
-    sentiment: str | None,
-) -> pd.DataFrame:
+def apply_filters(entity: str | None, keyword: str | None, sentiment: str | None) -> pd.DataFrame:
     out = df
 
     if entity and entity != "All":
@@ -99,8 +91,7 @@ def make_wordcloud_base64(text_blob: str) -> str | None:
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
-    encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return encoded
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 # -----------------------------
@@ -109,18 +100,22 @@ def make_wordcloud_base64(text_blob: str) -> str | None:
 class PredictRequest(BaseModel):
     text: str = Field(..., min_length=1)
 
+
 class PredictResponse(BaseModel):
     sentiment: str
     classes: list[str] | None = None
     probabilities: list[float] | None = None
 
+
 class BatchPredictRequest(BaseModel):
     texts: list[str] = Field(..., min_length=1)
+
 
 class BatchPredictResponse(BaseModel):
     sentiments: list[str]
     classes: list[str] | None = None
     probabilities: list[list[float]] | None = None
+
 
 class ExploreRequest(BaseModel):
     entity: str = "All"
@@ -130,6 +125,7 @@ class ExploreRequest(BaseModel):
     top_entities_n: int = 10
     leaderboard_n: int = 20
     sample_n: int = 50
+
 
 class ExploreResponse(BaseModel):
     total_rows: int
@@ -146,18 +142,24 @@ class ExploreResponse(BaseModel):
 # -----------------------------
 # FastAPI app
 # -----------------------------
-from fastapi.middleware.cors import CORSMiddleware
-import os
+app = FastAPI()
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+# Comma-separated origins, e.g.
+# ALLOWED_ORIGINS="http://localhost:5173,https://your-app.vercel.app"
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in ALLOWED_ORIGINS],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/health")
 def health():
@@ -196,7 +198,9 @@ def batch_predict(req: BatchPredictRequest):
 
     classes, probs = safe_predict_proba(texts)
     if probs is None:
-        return BatchPredictResponse(sentiments=[str(x) for x in preds], classes=None, probabilities=None)
+        return BatchPredictResponse(
+            sentiments=[str(x) for x in preds], classes=None, probabilities=None
+        )
 
     return BatchPredictResponse(
         sentiments=[str(x) for x in preds],
@@ -220,16 +224,12 @@ def explore(req: ExploreRequest):
         share_neutral = 0.0
         share_positive = 0.0
 
-    # Distribution counts
     dist_counts = (
-        show["sentiment"].value_counts()
-        .reindex(SENTIMENTS, fill_value=0)
-        .reset_index()
+        show["sentiment"].value_counts().reindex(SENTIMENTS, fill_value=0).reset_index()
     )
     dist_counts.columns = ["sentiment", "count"]
     distribution = dist_counts.to_dict(orient="records")
 
-    # Sentiment mix by top entities
     top_entities = show["entity"].value_counts().head(req.top_entities_n).index.tolist()
     mix_df = (
         show[show["entity"].isin(top_entities)]
@@ -239,20 +239,13 @@ def explore(req: ExploreRequest):
     )
     mix = mix_df.to_dict(orient="records")
 
-    # Leaderboard
-    lb = (
-        show["entity"].value_counts()
-        .head(req.leaderboard_n)
-        .reset_index()
-    )
+    lb = show["entity"].value_counts().head(req.leaderboard_n).reset_index()
     lb.columns = ["entity", "mentions"]
     leaderboard = lb.to_dict(orient="records")
 
-    # Samples
     cols = ["tweet_id", "entity", "sentiment", "text"]
     samples = show[cols].head(req.sample_n).to_dict(orient="records")
 
-    # Wordcloud (from clean_text of chosen sentiment)
     subset = show[show["sentiment"] == req.wc_sentiment]
     blob = " ".join(subset["clean_text"].tolist()[:1500])
     wc_b64 = make_wordcloud_base64(blob)
