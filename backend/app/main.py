@@ -146,16 +146,14 @@ class ExploreResponse(BaseModel):
 # -----------------------------
 # FastAPI app
 # -----------------------------
-app = FastAPI(title="Tweet Sentiment API", version="1.0")
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        # We'll add your Vercel domain later:
-        # "https://your-frontend.vercel.app",
-    ],
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
