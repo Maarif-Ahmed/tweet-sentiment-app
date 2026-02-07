@@ -38,6 +38,7 @@ import CardHeader from "./ui/CardHeader";
 import { api } from "./api";
 import type { ExploreResponse, Meta, PredictResponse } from "./api";
 
+/* -------------------- helpers -------------------- */
 function sentimentChipColor(
   s: string
 ): "default" | "success" | "warning" | "error" | "info" {
@@ -48,42 +49,37 @@ function sentimentChipColor(
   return "default";
 }
 
-function ChartShell(props: {
+/** Prevent charts/images from forcing page width */
+function ResponsiveSurface(props: {
   children: React.ReactNode;
-  minWidth?: number;
   refEl?: React.RefObject<HTMLDivElement | null>;
 }) {
-  // A responsive wrapper that:
-  // - fills width on mobile
-  // - allows horizontal scroll if chart needs more room
-  // - avoids overflow breaking layout
   return (
     <Box
       ref={props.refEl as any}
       sx={{
         width: "100%",
-        bgcolor: "white",
+        overflow: "hidden",
         borderRadius: 2,
-        overflowX: "auto",
-        overflowY: "hidden",
-        WebkitOverflowScrolling: "touch",
+        bgcolor: "white",
       }}
     >
-      <Box sx={{ minWidth: props.minWidth ?? 0 }}>{props.children}</Box>
+      {props.children}
     </Box>
   );
 }
 
-function GridShell(props: { children: React.ReactNode; height: number }) {
-  // DataGrid wrapper that stays responsive and scrollable
+/** Make DataGrid scroll internally (NOT the page) */
+function ResponsiveGridBox(props: { height: number; children: React.ReactNode }) {
   return (
     <Box
       sx={{
         width: "100%",
         height: props.height,
         overflow: "hidden",
-        // Let the grid handle horizontal scroll without breaking page
-        "& .MuiDataGrid-main": { overflow: "auto" },
+        "& .MuiDataGrid-root": { width: "100%" },
+        "& .MuiDataGrid-main": { overflowX: "auto" },
+        "& .MuiDataGrid-virtualScroller": { overflowX: "auto" },
       }}
     >
       {props.children}
@@ -94,11 +90,10 @@ function GridShell(props: { children: React.ReactNode; height: number }) {
 export default function App() {
   const theme = useTheme();
   const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
-  
 
-  const chartH = isSmDown ? 240 : 320;
-  const chartH2 = isSmDown ? 220 : 300;
-  const tableH = isSmDown ? 380 : 520;
+  const chartH = isSmDown ? 260 : 320;
+  const chartHSmall = isSmDown ? 240 : 300;
+  const tableH = isSmDown ? 420 : 520;
 
   const [active, setActive] = useState<NavKey>("single");
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -137,6 +132,15 @@ export default function App() {
   }, []);
 
   // ---------- Single Prediction ----------
+  const confidenceData = useMemo(() => {
+    if (!pred?.classes || !pred?.probabilities) return null;
+    const rows = pred.classes.map((c, i) => ({
+      label: c,
+      value: pred.probabilities![i],
+    }));
+    return rows.sort((a, b) => b.value - a.value);
+  }, [pred]);
+
   async function runPredict() {
     setPred(null);
     const t = text.trim();
@@ -238,16 +242,7 @@ export default function App() {
     }));
   }, [explore]);
 
-  const exploreCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const d of explorerDist) m.set(String(d.label), Number(d.value));
-    return {
-      Negative: m.get("Negative") ?? 0,
-      Neutral: m.get("Neutral") ?? 0,
-      Positive: m.get("Positive") ?? 0,
-    };
-  }, [explorerDist]);
-
+  // Derived: entity positivity score (pos - neg)
   const entityScores = useMemo(() => {
     if (!explore) return [];
     const map = new Map<string, { pos: number; neg: number; neu: number }>();
@@ -262,8 +257,10 @@ export default function App() {
 
     const out = Array.from(map.entries()).map(([entity, v]) => {
       const total = v.pos + v.neg + v.neu || 1;
-      const score = (v.pos - v.neg) / total;
-      return { entity, ...v, total, score };
+      const positivity = v.pos / total; // 0..1
+      const negativity = v.neg / total; // 0..1
+      const score = (v.pos - v.neg) / total; // -1..1
+      return { entity, ...v, total, positivity, negativity, score };
     });
 
     out.sort((a, b) => b.total - a.total);
@@ -290,7 +287,7 @@ export default function App() {
   const topPosBar = useMemo(
     () => ({
       labels: topPositiveEntities.map((x) => x.entity),
-      values: topPositiveEntities.map((x) => Math.round(x.score * 100)),
+      values: topPositiveEntities.map((x) => Math.round(x.score * 100)), // -100..100
     }),
     [topPositiveEntities]
   );
@@ -324,26 +321,24 @@ export default function App() {
     entities.forEach((e) => map.set(e, { Negative: 0, Neutral: 0, Positive: 0 }));
     explore.mix.forEach((m) => (map.get(m.entity)![m.sentiment] = m.count));
 
-    // On small screens, too many labels will smash. Keep top N if needed.
-    const maxEntities = isSmDown ? 10 : entities.length;
-    const x = entities.slice(0, maxEntities);
-
     return {
-      x,
-      neg: x.map((e) => map.get(e)!.Negative),
-      neu: x.map((e) => map.get(e)!.Neutral),
-      pos: x.map((e) => map.get(e)!.Positive),
+      x: entities,
+      neg: entities.map((e) => map.get(e)!.Negative),
+      neu: entities.map((e) => map.get(e)!.Neutral),
+      pos: entities.map((e) => map.get(e)!.Positive),
     };
-  }, [explore, isSmDown]);
+  }, [explore]);
 
+  // Sentiment index: (-1 .. +1) derived from counts
   const sentimentIndex = useMemo(() => {
     if (!explore) return 0;
-    const neg = exploreCounts.Negative;
-    const neu = exploreCounts.Neutral;
-    const pos = exploreCounts.Positive;
+    const dist = new Map(explore.distribution.map((d) => [d.sentiment, d.count]));
+    const neg = dist.get("Negative") ?? 0;
+    const neu = dist.get("Neutral") ?? 0;
+    const pos = dist.get("Positive") ?? 0;
     const denom = neg + neu + pos || 1;
-    return (pos - neg) / denom;
-  }, [explore, exploreCounts]);
+    return (pos - neg) / denom; // -1..1
+  }, [explore]);
 
   const leaderboardRows = useMemo(() => {
     if (!explore) return [];
@@ -392,22 +387,10 @@ export default function App() {
     }));
   }, [batchPredRows]);
 
-  const batchPercents = useMemo(() => {
-    const total = batchPredRows.length || 0;
-    if (total <= 1) return [];
-    return batchDist
-      .map((d) => ({
-        label: String(d.label),
-        value: Number(d.value),
-        pct: (Number(d.value) / total) * 100,
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [batchDist, batchPredRows.length]);
-
   // ---------- Columns ----------
   const leaderboardCols: GridColDef[] = useMemo(
     () => [
-      { field: "entity", headerName: "Entity", flex: 1, minWidth: 180 },
+      { field: "entity", headerName: "Entity", flex: 1, minWidth: 160 },
       { field: "mentions", headerName: "Mentions", width: 120 },
     ],
     []
@@ -418,7 +401,17 @@ export default function App() {
       { field: "tweet_id", headerName: "Tweet ID", width: 120 },
       { field: "entity", headerName: "Entity", width: 140 },
       { field: "sentiment", headerName: "Sentiment", width: 120 },
-      { field: "text", headerName: "Text", flex: 1, minWidth: 320 },
+      {
+        field: "text",
+        headerName: "Text",
+        flex: 1,
+        minWidth: 220,
+        renderCell: (params) => (
+          <Box sx={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 }}>
+            {params.value}
+          </Box>
+        ),
+      },
     ],
     []
   );
@@ -432,18 +425,27 @@ export default function App() {
         field: k,
         headerName: k,
         flex: k === "text" ? 1 : 0.6,
-        minWidth: k === "text" ? 360 : 140,
+        minWidth: k === "text" ? 240 : 120,
+        renderCell:
+          k === "text"
+            ? (params) => (
+                <Box sx={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 }}>
+                  {params.value}
+                </Box>
+              )
+            : undefined,
       }));
   }, [batchPredRows]);
 
+  // ---------- Topbar right controls ----------
   const topbarRight = (
-    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ overflowX: "hidden" }}>
       <Chip
         size="small"
         variant="outlined"
         label={meta ? `Entities: ${meta.entities.length}` : "Loading…"}
       />
-      <Chip size="small" label="Light UI" variant="outlined" />
+      <Chip size="small" label="Responsive UI" variant="outlined" />
     </Stack>
   );
 
@@ -460,9 +462,9 @@ export default function App() {
         <>
           {/* ================= SINGLE ================= */}
           {active === "single" && (
-            <Grid container spacing={2.2}>
+            <Grid container spacing={2.2} sx={{ overflowX: "hidden" }}>
               <Grid size={{ xs: 12, md: 8 }}>
-                <Paper sx={{ p: 2.6 }}>
+                <Paper sx={{ p: 2.6, overflowX: "hidden" }}>
                   <CardHeader
                     title="Single Tweet Prediction"
                     subtitle="Analyze one tweet (no percentages shown)"
@@ -471,7 +473,7 @@ export default function App() {
                   <TextField
                     fullWidth
                     multiline
-                    minRows={6}
+                    minRows={isSmDown ? 5 : 6}
                     placeholder="Type or paste a tweet here…"
                     value={text}
                     onChange={(e) => setText(e.target.value)}
@@ -489,15 +491,17 @@ export default function App() {
                       size="large"
                       onClick={runPredict}
                       disabled={!text.trim() || predLoading}
-                      fullWidth
-                      sx={{ width: { xs: "100%", sm: "auto" } }}
+                      fullWidth={isSmDown}
                     >
                       Analyze sentiment
                     </Button>
 
                     {predLoading && (
-                      <Stack direction="row" justifyContent="center">
+                      <Stack direction="row" spacing={1} alignItems="center">
                         <CircularProgress size={22} />
+                        <Typography variant="body2" color="text.secondary">
+                          Analyzing…
+                        </Typography>
                       </Stack>
                     )}
                   </Stack>
@@ -510,22 +514,46 @@ export default function App() {
                         p: 2.2,
                         bgcolor: "#F8FAFC",
                         borderRadius: 2,
+                        overflowX: "hidden",
                       }}
                     >
-                      <Stack direction="row" spacing={1} alignItems="center">
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        sx={{ mb: 1.5, flexWrap: "wrap" }}
+                      >
                         <Typography sx={{ fontWeight: 900 }}>Prediction</Typography>
                         <Chip
                           label={pred.sentiment}
                           color={sentimentChipColor(pred.sentiment)}
                         />
                       </Stack>
+
+                      {/* Single: show bars ONLY (no % text) */}
+                      {confidenceData && (
+                        <Stack spacing={1.4}>
+                          {confidenceData.map((r) => (
+                            <Box key={r.label}>
+                              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                                {r.label}
+                              </Typography>
+                              <LinearProgress
+                                variant="determinate"
+                                value={r.value * 100}
+                                sx={{ height: 10, borderRadius: 999 }}
+                              />
+                            </Box>
+                          ))}
+                        </Stack>
+                      )}
                     </Paper>
                   )}
                 </Paper>
               </Grid>
 
               <Grid size={{ xs: 12, md: 4 }}>
-                <Paper sx={{ p: 2.4 }}>
+                <Paper sx={{ p: 2.4, overflowX: "hidden" }}>
                   <CardHeader title="Tips" subtitle="Examples + what to try" />
                   <Paper
                     variant="outlined"
@@ -548,26 +576,21 @@ export default function App() {
           {/* ================= EXPLORER ================= */}
           {active === "explorer" && (
             <ErrorBoundary>
-              <Grid container spacing={2.2}>
+              <Grid container spacing={2.2} sx={{ overflowX: "hidden" }}>
                 {/* Filters */}
                 <Grid size={{ xs: 12 }}>
-                  <Paper sx={{ p: 2.4 }}>
+                  <Paper sx={{ p: 2.4, overflowX: "hidden" }}>
                     <CardHeader
                       title="Dataset Explorer"
                       subtitle="Analytics, KPIs, entity insights, and searchable rows"
                       right={
-                        <Stack
-                          direction={{ xs: "column", sm: "row" }}
-                          spacing={1}
-                          sx={{ width: { xs: "100%", sm: "auto" } }}
-                        >
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                           <Button
                             variant="outlined"
                             startIcon={<DownloadIcon />}
                             onClick={downloadFilteredSamplesCsv}
                             disabled={!explore || filteredSampleRows.length === 0}
-                            fullWidth
-                            sx={{ width: { xs: "100%", sm: "auto" } }}
+                            fullWidth={isSmDown}
                           >
                             Export Samples CSV
                           </Button>
@@ -576,8 +599,7 @@ export default function App() {
                             startIcon={<FilterAltIcon />}
                             onClick={runExplore}
                             disabled={exploreLoading}
-                            fullWidth
-                            sx={{ width: { xs: "100%", sm: "auto" } }}
+                            fullWidth={isSmDown}
                           >
                             Apply
                           </Button>
@@ -590,7 +612,6 @@ export default function App() {
                         <TextField
                           select
                           fullWidth
-                          size="small"
                           label="Entity"
                           value={entity}
                           onChange={(e) => setEntity(e.target.value)}
@@ -607,10 +628,10 @@ export default function App() {
                       <Grid size={{ xs: 12, md: 3 }}>
                         <TextField
                           fullWidth
-                          size="small"
                           label="Keyword (server filter)"
                           value={keyword}
                           onChange={(e) => setKeyword(e.target.value)}
+                          placeholder="Filters server-side…"
                         />
                       </Grid>
 
@@ -618,7 +639,6 @@ export default function App() {
                         <TextField
                           select
                           fullWidth
-                          size="small"
                           label="Sentiment"
                           value={sentiment}
                           onChange={(e) => setSentiment(e.target.value)}
@@ -635,7 +655,6 @@ export default function App() {
                         <TextField
                           select
                           fullWidth
-                          size="small"
                           label="WordCloud"
                           value={wcSentiment}
                           onChange={(e) => setWcSentiment(e.target.value as any)}
@@ -649,10 +668,10 @@ export default function App() {
                       <Grid size={{ xs: 12, md: 2 }}>
                         <TextField
                           fullWidth
-                          size="small"
                           label="Search (local)"
                           value={localSearch}
                           onChange={(e) => setLocalSearch(e.target.value)}
+                          placeholder="Search tables instantly…"
                         />
                       </Grid>
                     </Grid>
@@ -682,35 +701,35 @@ export default function App() {
 
                 {explore && (
                   <>
-                    {/* KPIs */}
-                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    {/* KPI cards */}
+                    <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
                         label="Rows (filtered)"
                         value={explore.total_rows.toLocaleString()}
                         hint="records in view"
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
                         label="Top entity"
                         value={explore.top_entity || "—"}
                         hint="most frequent topic"
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
-                        label="Neutral count"
-                        value={exploreCounts.Neutral.toLocaleString()}
+                        label="Neutral share"
+                        value={`${(explore.share_neutral * 100).toFixed(1)}%`}
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
-                        label="Positive count"
-                        value={exploreCounts.Positive.toLocaleString()}
+                        label="Positive share"
+                        value={`${(explore.share_positive * 100).toFixed(1)}%`}
                       />
                     </Grid>
 
-                    {/* Charts row 1 */}
+                    {/* Charts Row 1 */}
                     <Grid size={{ xs: 12, md: 5 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
@@ -732,16 +751,16 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <ChartShell refEl={distRef} minWidth={isSmDown ? 360 : 0}>
+                        <ResponsiveSurface refEl={distRef}>
                           {explorerDist.length ? (
                             <PieChart
                               height={chartH}
-                              series={[{ data: explorerDist, innerRadius: isSmDown ? 56 : 78 }]}
+                              series={[{ data: explorerDist, innerRadius: isSmDown ? 55 : 78 }]}
                             />
                           ) : (
                             <Alert severity="info">No data.</Alert>
                           )}
-                        </ChartShell>
+                        </ResponsiveSurface>
                       </Paper>
                     </Grid>
 
@@ -766,7 +785,7 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <ChartShell refEl={topEntitiesRef} minWidth={isSmDown ? 620 : 0}>
+                        <ResponsiveSurface refEl={topEntitiesRef}>
                           {topEntitiesBar.labels.length ? (
                             <BarChart
                               height={chartH}
@@ -774,30 +793,36 @@ export default function App() {
                                 {
                                   scaleType: "band",
                                   data: topEntitiesBar.labels,
-                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
                                 },
                               ]}
-                              series={[{ data: topEntitiesBar.values, label: "Mentions" }]}
+                              series={[
+                                { data: topEntitiesBar.values, label: "Mentions" },
+                              ]}
                             />
                           ) : (
-                            <Alert severity="info">No entities available.</Alert>
+                            <Alert severity="info">
+                              No entities available for this filter.
+                            </Alert>
                           )}
-                        </ChartShell>
+                        </ResponsiveSurface>
                       </Paper>
                     </Grid>
 
-                    {/* Charts row 2 */}
+                    {/* Charts Row 2 */}
                     <Grid size={{ xs: 12, md: 7 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
                           title="Entity Sentiment Mix"
-                          subtitle="Stacked breakdown"
+                          subtitle="Stacked breakdown (top entities)"
                           right={
                             <Tooltip title="Export PNG">
                               <IconButton
                                 onClick={() =>
                                   mixRef.current &&
-                                  exportRefToPng(mixRef.current, "entity_sentiment_mix.png")
+                                  exportRefToPng(
+                                    mixRef.current,
+                                    "entity_sentiment_mix.png"
+                                  )
                                 }
                               >
                                 <ImageIcon />
@@ -805,17 +830,11 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <ChartShell refEl={mixRef} minWidth={isSmDown ? 760 : 0}>
+                        <ResponsiveSurface refEl={mixRef}>
                           {explorerMix.x.length ? (
                             <BarChart
                               height={chartH}
-                              xAxis={[
-                                {
-                                  scaleType: "band",
-                                  data: explorerMix.x,
-                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
-                                },
-                              ]}
+                              xAxis={[{ scaleType: "band", data: explorerMix.x }]}
                               series={[
                                 { label: "Negative", data: explorerMix.neg, stack: "a" },
                                 { label: "Neutral", data: explorerMix.neu, stack: "a" },
@@ -825,29 +844,24 @@ export default function App() {
                           ) : (
                             <Alert severity="info">No mix data.</Alert>
                           )}
-                        </ChartShell>
+                        </ResponsiveSurface>
                       </Paper>
                     </Grid>
 
                     <Grid size={{ xs: 12, md: 5 }}>
-                      <Paper sx={{ p: 2.4 }}>
+                      <Paper sx={{ p: 2.4, overflowX: "hidden" }}>
                         <CardHeader title="WordCloud" subtitle={`From: ${wcSentiment}`} />
                         {explore.wordcloud_png_base64 ? (
-                          <Box
-                            sx={{
-                              width: "100%",
-                              overflow: "hidden",
-                              borderRadius: 2,
-                              border: "1px solid rgba(15,23,42,0.10)",
-                              bgcolor: "white",
-                            }}
-                          >
+                          <Box sx={{ width: "100%", overflow: "hidden" }}>
                             <img
                               alt="wordcloud"
                               style={{
                                 width: "100%",
                                 height: "auto",
                                 display: "block",
+                                borderRadius: 14,
+                                border: "1px solid rgba(15,23,42,0.10)",
+                                background: "white",
                               }}
                               src={`data:image/png;base64,${explore.wordcloud_png_base64}`}
                             />
@@ -871,12 +885,12 @@ export default function App() {
                       </Paper>
                     </Grid>
 
-                    {/* Positive/Negative charts */}
+                    {/* Top positive / negative */}
                     <Grid size={{ xs: 12, md: 6 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
                           title="Most Positive Entities"
-                          subtitle="Score (×100)"
+                          subtitle="Score: (pos−neg)/total"
                           right={
                             <Tooltip title="Export PNG">
                               <IconButton
@@ -890,23 +904,17 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <ChartShell refEl={posRef} minWidth={isSmDown ? 620 : 0}>
+                        <ResponsiveSurface refEl={posRef}>
                           {topPosBar.labels.length ? (
                             <BarChart
-                              height={chartH2}
-                              xAxis={[
-                                {
-                                  scaleType: "band",
-                                  data: topPosBar.labels,
-                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
-                                },
-                              ]}
-                              series={[{ data: topPosBar.values, label: "Score" }]}
+                              height={chartHSmall}
+                              xAxis={[{ scaleType: "band", data: topPosBar.labels }]}
+                              series={[{ data: topPosBar.values, label: "Score (×100)" }]}
                             />
                           ) : (
                             <Alert severity="info">Not enough entities.</Alert>
                           )}
-                        </ChartShell>
+                        </ResponsiveSurface>
                       </Paper>
                     </Grid>
 
@@ -914,7 +922,7 @@ export default function App() {
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
                           title="Most Negative Entities"
-                          subtitle="Score (×100)"
+                          subtitle="Score: (pos−neg)/total"
                           right={
                             <Tooltip title="Export PNG">
                               <IconButton
@@ -928,23 +936,17 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <ChartShell refEl={negRef} minWidth={isSmDown ? 620 : 0}>
+                        <ResponsiveSurface refEl={negRef}>
                           {topNegBar.labels.length ? (
                             <BarChart
-                              height={chartH2}
-                              xAxis={[
-                                {
-                                  scaleType: "band",
-                                  data: topNegBar.labels,
-                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
-                                },
-                              ]}
-                              series={[{ data: topNegBar.values, label: "Score" }]}
+                              height={chartHSmall}
+                              xAxis={[{ scaleType: "band", data: topNegBar.labels }]}
+                              series={[{ data: topNegBar.values, label: "Score (×100)" }]}
                             />
                           ) : (
                             <Alert severity="info">Not enough entities.</Alert>
                           )}
-                        </ChartShell>
+                        </ResponsiveSurface>
                       </Paper>
                     </Grid>
 
@@ -952,38 +954,41 @@ export default function App() {
                     <Grid size={{ xs: 12, md: 5 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader title="Leaderboard" subtitle="Top entities (mentions)" />
-                        <GridShell height={tableH}>
+                        <ResponsiveGridBox height={tableH}>
                           <DataGrid
                             rows={filteredLeaderboardRows}
                             columns={leaderboardCols}
                             disableRowSelectionOnClick
-                            pageSizeOptions={isSmDown ? [10, 20] : [10, 20, 50]}
+                            pageSizeOptions={[10, 20, 50]}
                             initialState={{
-                              pagination: { paginationModel: { pageSize: isSmDown ? 10 : 20, page: 0 } },
+                              pagination: { paginationModel: { pageSize: 20, page: 0 } },
                             }}
                             density={isSmDown ? "compact" : "standard"}
-                            slots={{ toolbar: isSmDown ? undefined : (GridToolbar as any) }}
+                            slots={{ toolbar: GridToolbar as any }}
                           />
-                        </GridShell>
+                        </ResponsiveGridBox>
                       </Paper>
                     </Grid>
 
                     <Grid size={{ xs: 12, md: 7 }}>
                       <Paper sx={{ p: 2.4 }}>
-                        <CardHeader title="Sample Rows" subtitle="Searchable preview" />
-                        <GridShell height={tableH}>
+                        <CardHeader
+                          title="Sample Rows"
+                          subtitle="Searchable preview (local search applies)"
+                        />
+                        <ResponsiveGridBox height={tableH}>
                           <DataGrid
                             rows={filteredSampleRows}
                             columns={sampleCols}
                             disableRowSelectionOnClick
-                            pageSizeOptions={isSmDown ? [10, 25] : [10, 25, 50, 100]}
+                            pageSizeOptions={[10, 25, 50, 100]}
                             initialState={{
-                              pagination: { paginationModel: { pageSize: isSmDown ? 10 : 25, page: 0 } },
+                              pagination: { paginationModel: { pageSize: 25, page: 0 } },
                             }}
                             density={isSmDown ? "compact" : "standard"}
-                            slots={{ toolbar: isSmDown ? undefined : (GridToolbar as any) }}
+                            slots={{ toolbar: GridToolbar as any }}
                           />
-                        </GridShell>
+                        </ResponsiveGridBox>
                       </Paper>
                     </Grid>
                   </>
@@ -994,7 +999,7 @@ export default function App() {
 
           {/* ================= BATCH ================= */}
           {active === "batch" && (
-            <Grid container spacing={2.2}>
+            <Grid container spacing={2.2} sx={{ overflowX: "hidden" }}>
               <Grid size={{ xs: 12 }}>
                 <Paper sx={{ p: 2.4 }}>
                   <CardHeader
@@ -1004,7 +1009,12 @@ export default function App() {
 
                   <Paper
                     variant="outlined"
-                    sx={{ p: 2.2, borderStyle: "dashed", bgcolor: "white" }}
+                    sx={{
+                      p: 2.2,
+                      borderStyle: "dashed",
+                      bgcolor: "white",
+                      overflowX: "hidden",
+                    }}
                   >
                     <Stack
                       direction={{ xs: "column", md: "row" }}
@@ -1012,9 +1022,9 @@ export default function App() {
                       alignItems={{ xs: "stretch", md: "center" }}
                       justifyContent="space-between"
                     >
-                      <Stack>
+                      <Stack sx={{ minWidth: 0 }}>
                         <Typography sx={{ fontWeight: 900 }}>Upload CSV</Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-word" }}>
                           {batchFilename
                             ? `Selected: ${batchFilename}`
                             : "Choose a file to run batch predictions."}
@@ -1026,8 +1036,7 @@ export default function App() {
                         component="label"
                         startIcon={<CloudUploadIcon />}
                         disabled={batchLoading}
-                        fullWidth
-                        sx={{ width: { xs: "100%", md: "auto" } }}
+                        fullWidth={isSmDown}
                       >
                         Select file
                         <input
@@ -1058,29 +1067,26 @@ export default function App() {
                       <CardHeader
                         title="Distribution"
                         subtitle="Predicted sentiment breakdown"
-                        right={<Chip label={`${batchPredRows.length} rows`} variant="outlined" />}
+                        right={
+                          <Chip
+                            label={`${batchPredRows.length} rows`}
+                            variant="outlined"
+                          />
+                        }
                       />
-
-                      <ChartShell minWidth={isSmDown ? 360 : 0}>
+                      <ResponsiveSurface>
                         <PieChart
                           height={chartH}
-                          series={[{ data: batchDist, innerRadius: isSmDown ? 56 : 78 }]}
+                          series={[{ data: batchDist, innerRadius: isSmDown ? 55 : 78 }]}
                         />
-                      </ChartShell>
+                      </ResponsiveSurface>
 
-                      {batchPercents.length > 0 && (
-                        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
-                          {batchPercents.map((x) => (
-                            <Chip
-                              key={x.label}
-                              variant="outlined"
-                              label={`${x.label}: ${x.pct.toFixed(1)}%`}
-                            />
-                          ))}
-                        </Stack>
-                      )}
-
-                      <Button sx={{ mt: 1.5 }} fullWidth variant="outlined" onClick={downloadCSV}>
+                      <Button
+                        sx={{ mt: 1.5 }}
+                        fullWidth
+                        variant="outlined"
+                        onClick={downloadCSV}
+                      >
                         Download CSV
                       </Button>
                     </Paper>
@@ -1089,18 +1095,18 @@ export default function App() {
                   <Grid size={{ xs: 12, md: 8 }}>
                     <Paper sx={{ p: 2.4 }}>
                       <CardHeader title="Preview" subtitle="First 200 rows" />
-                      <GridShell height={tableH}>
+                      <ResponsiveGridBox height={tableH}>
                         <DataGrid
                           rows={batchPredRows.slice(0, 200)}
                           columns={batchCols}
                           disableRowSelectionOnClick
-                          pageSizeOptions={isSmDown ? [10, 25] : [25, 50, 100]}
+                          pageSizeOptions={[25, 50, 100]}
                           initialState={{
-                            pagination: { paginationModel: { pageSize: isSmDown ? 10 : 25, page: 0 } },
+                            pagination: { paginationModel: { pageSize: 25, page: 0 } },
                           }}
                           density={isSmDown ? "compact" : "standard"}
                         />
-                      </GridShell>
+                      </ResponsiveGridBox>
                     </Paper>
                   </Grid>
                 </>
