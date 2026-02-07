@@ -84,15 +84,6 @@ export default function App() {
   }, []);
 
   // ---------- Single Prediction ----------
-  const confidenceData = useMemo(() => {
-    if (!pred?.classes || !pred?.probabilities) return null;
-    const rows = pred.classes.map((c, i) => ({
-      label: c,
-      value: pred.probabilities![i],
-    }));
-    return rows.sort((a, b) => b.value - a.value);
-  }, [pred]);
-
   async function runPredict() {
     setPred(null);
     const t = text.trim();
@@ -194,6 +185,18 @@ export default function App() {
     }));
   }, [explore]);
 
+  // Useful counts (avoid % in UI)
+  const exploreCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of explorerDist) m.set(String(d.label), Number(d.value));
+    return {
+      Negative: m.get("Negative") ?? 0,
+      Neutral: m.get("Neutral") ?? 0,
+      Positive: m.get("Positive") ?? 0,
+    };
+  }, [explorerDist]);
+
+  // Derived: entity sentiment score
   const entityScores = useMemo(() => {
     if (!explore) return [];
     const map = new Map<string, { pos: number; neg: number; neu: number }>();
@@ -208,10 +211,8 @@ export default function App() {
 
     const out = Array.from(map.entries()).map(([entity, v]) => {
       const total = v.pos + v.neg + v.neu || 1;
-      const positivity = v.pos / total;
-      const negativity = v.neg / total;
-      const score = (v.pos - v.neg) / total;
-      return { entity, ...v, total, positivity, negativity, score };
+      const score = (v.pos - v.neg) / total; // -1..1
+      return { entity, ...v, total, score };
     });
 
     out.sort((a, b) => b.total - a.total);
@@ -242,7 +243,6 @@ export default function App() {
     }),
     [topPositiveEntities]
   );
-
   const topNegBar = useMemo(
     () => ({
       labels: topNegativeEntities.map((x) => x.entity),
@@ -280,15 +280,15 @@ export default function App() {
     };
   }, [explore]);
 
+  // Sentiment index: (-1 .. +1) derived from counts
   const sentimentIndex = useMemo(() => {
     if (!explore) return 0;
-    const dist = new Map(explore.distribution.map((d) => [d.sentiment, d.count]));
-    const neg = dist.get("Negative") ?? 0;
-    const neu = dist.get("Neutral") ?? 0;
-    const pos = dist.get("Positive") ?? 0;
+    const neg = exploreCounts.Negative;
+    const neu = exploreCounts.Neutral;
+    const pos = exploreCounts.Positive;
     const denom = neg + neu + pos || 1;
-    return (pos - neg) / denom;
-  }, [explore]);
+    return (pos - neg) / denom; // -1..1
+  }, [explore, exploreCounts]);
 
   const leaderboardRows = useMemo(() => {
     if (!explore) return [];
@@ -337,6 +337,19 @@ export default function App() {
     }));
   }, [batchPredRows]);
 
+  // Percentages ONLY when multiple tweets (batch)
+  const batchPercents = useMemo(() => {
+    const total = batchPredRows.length || 0;
+    if (total <= 1) return [];
+    return batchDist
+      .map((d) => ({
+        label: String(d.label),
+        value: Number(d.value),
+        pct: (Number(d.value) / total) * 100,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [batchDist, batchPredRows.length]);
+
   // ---------- Columns ----------
   const leaderboardCols: GridColDef[] = useMemo(
     () => [
@@ -370,7 +383,7 @@ export default function App() {
   }, [batchPredRows]);
 
   const topbarRight = (
-    <Stack direction="row" spacing={1} alignItems="center">
+    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
       <Chip
         size="small"
         variant="outlined"
@@ -398,7 +411,7 @@ export default function App() {
                 <Paper sx={{ p: 2.6 }}>
                   <CardHeader
                     title="Single Tweet Prediction"
-                    subtitle="Analyze one tweet and view confidence scores"
+                    subtitle="Analyze one tweet (no percentages shown)"
                   />
 
                   <TextField
@@ -412,21 +425,27 @@ export default function App() {
                   />
 
                   <Stack
-                    direction="row"
+                    direction={{ xs: "column", sm: "row" }}
                     spacing={1.5}
                     sx={{ mt: 2 }}
-                    alignItems="center"
+                    alignItems={{ xs: "stretch", sm: "center" }}
                   >
                     <Button
                       variant="contained"
                       size="large"
                       onClick={runPredict}
                       disabled={!text.trim() || predLoading}
+                      fullWidth
+                      sx={{ width: { xs: "100%", sm: "auto" } }}
                     >
                       Analyze sentiment
                     </Button>
 
-                    {predLoading && <CircularProgress size={22} />}
+                    {predLoading && (
+                      <Stack direction="row" justifyContent="center">
+                        <CircularProgress size={22} />
+                      </Stack>
+                    )}
                   </Stack>
 
                   {pred && (
@@ -439,46 +458,13 @@ export default function App() {
                         borderRadius: 2,
                       }}
                     >
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        alignItems="center"
-                        sx={{ mb: 1.5 }}
-                      >
-                        <Typography sx={{ fontWeight: 900 }}>
-                          Prediction
-                        </Typography>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography sx={{ fontWeight: 900 }}>Prediction</Typography>
                         <Chip
                           label={pred.sentiment}
                           color={sentimentChipColor(pred.sentiment)}
                         />
                       </Stack>
-
-                      {confidenceData && (
-                        <Stack spacing={1.4}>
-                          {confidenceData.map((r) => (
-                            <Box key={r.label}>
-                              <Stack
-                                direction="row"
-                                justifyContent="space-between"
-                              >
-                                <Typography variant="body2">{r.label}</Typography>
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                >
-                                  {(r.value * 100).toFixed(1)}%
-                                </Typography>
-                              </Stack>
-                              <LinearProgress
-                                variant="determinate"
-                                value={r.value * 100}
-                                sx={{ height: 10, borderRadius: 999 }}
-                              />
-                            </Box>
-                          ))}
-                        </Stack>
-                      )}
                     </Paper>
                   )}
                 </Paper>
@@ -509,18 +495,25 @@ export default function App() {
           {active === "explorer" && (
             <ErrorBoundary>
               <Grid container spacing={2.2}>
+                {/* Filters + Search */}
                 <Grid size={{ xs: 12 }}>
                   <Paper sx={{ p: 2.4 }}>
                     <CardHeader
                       title="Dataset Explorer"
                       subtitle="Analytics, KPIs, entity insights, and searchable rows"
                       right={
-                        <Stack direction="row" spacing={1}>
+                        <Stack
+                          direction={{ xs: "column", sm: "row" }}
+                          spacing={1}
+                          sx={{ width: { xs: "100%", sm: "auto" } }}
+                        >
                           <Button
                             variant="outlined"
                             startIcon={<DownloadIcon />}
                             onClick={downloadFilteredSamplesCsv}
                             disabled={!explore || filteredSampleRows.length === 0}
+                            fullWidth
+                            sx={{ width: { xs: "100%", sm: "auto" } }}
                           >
                             Export Samples CSV
                           </Button>
@@ -529,6 +522,8 @@ export default function App() {
                             startIcon={<FilterAltIcon />}
                             onClick={runExplore}
                             disabled={exploreLoading}
+                            fullWidth
+                            sx={{ width: { xs: "100%", sm: "auto" } }}
                           >
                             Apply
                           </Button>
@@ -541,6 +536,7 @@ export default function App() {
                         <TextField
                           select
                           fullWidth
+                          size="small"
                           label="Entity"
                           value={entity}
                           onChange={(e) => setEntity(e.target.value)}
@@ -557,6 +553,7 @@ export default function App() {
                       <Grid size={{ xs: 12, md: 3 }}>
                         <TextField
                           fullWidth
+                          size="small"
                           label="Keyword (server filter)"
                           value={keyword}
                           onChange={(e) => setKeyword(e.target.value)}
@@ -568,6 +565,7 @@ export default function App() {
                         <TextField
                           select
                           fullWidth
+                          size="small"
                           label="Sentiment"
                           value={sentiment}
                           onChange={(e) => setSentiment(e.target.value)}
@@ -584,11 +582,10 @@ export default function App() {
                         <TextField
                           select
                           fullWidth
+                          size="small"
                           label="WordCloud"
                           value={wcSentiment}
-                          onChange={(e) =>
-                            setWcSentiment(e.target.value as any)
-                          }
+                          onChange={(e) => setWcSentiment(e.target.value as any)}
                         >
                           <MenuItem value="Negative">Negative</MenuItem>
                           <MenuItem value="Neutral">Neutral</MenuItem>
@@ -599,6 +596,7 @@ export default function App() {
                       <Grid size={{ xs: 12, md: 2 }}>
                         <TextField
                           fullWidth
+                          size="small"
                           label="Search (local)"
                           value={localSearch}
                           onChange={(e) => setLocalSearch(e.target.value)}
@@ -632,6 +630,7 @@ export default function App() {
 
                 {explore && (
                   <>
+                    {/* KPI cards (NO % displayed) */}
                     <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
                         label="Rows (filtered)"
@@ -648,17 +647,18 @@ export default function App() {
                     </Grid>
                     <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
-                        label="Neutral share"
-                        value={`${(explore.share_neutral * 100).toFixed(1)}%`}
+                        label="Neutral count"
+                        value={exploreCounts.Neutral.toLocaleString()}
                       />
                     </Grid>
                     <Grid size={{ xs: 12, md: 3 }}>
                       <StatCard
-                        label="Positive share"
-                        value={`${(explore.share_positive * 100).toFixed(1)}%`}
+                        label="Positive count"
+                        value={exploreCounts.Positive.toLocaleString()}
                       />
                     </Grid>
 
+                    {/* Charts Row 1 */}
                     <Grid size={{ xs: 12, md: 5 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
@@ -680,10 +680,7 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <Box
-                          ref={distRef}
-                          sx={{ bgcolor: "white", borderRadius: 2 }}
-                        >
+                        <Box ref={distRef} sx={{ bgcolor: "white", borderRadius: 2 }}>
                           {explorerDist.length ? (
                             <PieChart
                               height={320}
@@ -740,6 +737,7 @@ export default function App() {
                       </Paper>
                     </Grid>
 
+                    {/* Charts Row 2 */}
                     <Grid size={{ xs: 12, md: 7 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
@@ -814,6 +812,7 @@ export default function App() {
                       </Paper>
                     </Grid>
 
+                    {/* Positive/Negative entity charts */}
                     <Grid size={{ xs: 12, md: 6 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
@@ -884,6 +883,7 @@ export default function App() {
                       </Paper>
                     </Grid>
 
+                    {/* Tables */}
                     <Grid size={{ xs: 12, md: 5 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader title="Leaderboard" subtitle="Top entities (mentions)" />
@@ -962,6 +962,8 @@ export default function App() {
                         component="label"
                         startIcon={<CloudUploadIcon />}
                         disabled={batchLoading}
+                        fullWidth
+                        sx={{ width: { xs: "100%", md: "auto" } }}
                       >
                         Select file
                         <input
@@ -1003,6 +1005,20 @@ export default function App() {
                         height={320}
                         series={[{ data: batchDist, innerRadius: 78 }]}
                       />
+
+                      {/* ONLY multi-tweet shows % */}
+                      {batchPercents.length > 0 && (
+                        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                          {batchPercents.map((x) => (
+                            <Chip
+                              key={x.label}
+                              variant="outlined"
+                              label={`${x.label}: ${x.pct.toFixed(1)}%`}
+                            />
+                          ))}
+                        </Stack>
+                      )}
+
                       <Button
                         sx={{ mt: 1.5 }}
                         fullWidth
