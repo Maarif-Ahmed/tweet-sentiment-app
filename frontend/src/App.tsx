@@ -94,7 +94,7 @@ function GridShell(props: { children: React.ReactNode; height: number }) {
 export default function App() {
   const theme = useTheme();
   const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
-  const isMdDown = useMediaQuery(theme.breakpoints.down("md"));
+  
 
   const chartH = isSmDown ? 240 : 320;
   const chartH2 = isSmDown ? 220 : 300;
