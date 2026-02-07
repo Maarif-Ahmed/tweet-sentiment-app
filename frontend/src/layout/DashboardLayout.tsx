@@ -30,6 +30,7 @@ export type NavKey = "single" | "explorer" | "batch";
 /* -------------------- CONSTANTS -------------------- */
 const drawerWidth = 280;
 
+/* -------------------- COMPONENT -------------------- */
 export default function DashboardLayout(props: {
   active: NavKey;
   setActive: (k: NavKey) => void;
@@ -42,6 +43,7 @@ export default function DashboardLayout(props: {
 
   const sidebar = (
     <Box sx={{ px: 2.2, py: 2 }}>
+      {/* Brand */}
       <Stack spacing={0.5}>
         <Stack direction="row" spacing={1} alignItems="center">
           <Box
@@ -59,17 +61,17 @@ export default function DashboardLayout(props: {
           >
             X
           </Box>
-          <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontWeight: 950, lineHeight: 1.1 }} noWrap>
+          <Box>
+            <Typography sx={{ fontWeight: 950, lineHeight: 1.1 }}>
               Twitter Sentiment Analysis
             </Typography>
-            <Typography variant="caption" color="text.secondary" noWrap>
+            <Typography variant="caption" color="text.secondary">
               Analytics Dashboard
             </Typography>
           </Box>
         </Stack>
 
-        <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
+        <Stack direction="row" spacing={1}>
           <Chip size="small" label="Sentiment" variant="outlined" />
           <Chip size="small" label="Dashboard" variant="outlined" />
         </Stack>
@@ -77,6 +79,7 @@ export default function DashboardLayout(props: {
 
       <Divider sx={{ my: 2 }} />
 
+      {/* Navigation */}
       <List>
         <ListItemButton
           selected={props.active === "single"}
@@ -124,42 +127,59 @@ export default function DashboardLayout(props: {
   );
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        minHeight: "100vh",
-        bgcolor: "#F8FAFC",
-        overflowX: "hidden", // ✅ stop global horizontal scroll
-      }}
-    >
-      {/* Sidebar */}
-      {isMdUp ? (
-        <Drawer
-          variant="permanent"
-          PaperProps={{
-            sx: {
-              width: drawerWidth,
-              borderRight: "1px solid rgba(15,23,42,0.08)",
-              bgcolor: "white",
-              boxShadow: "4px 0 24px rgba(15,23,42,0.04)",
-              overflowX: "hidden",
-            },
-          }}
-        >
-          {sidebar}
-        </Drawer>
-      ) : (
-        <Drawer
-          open={open}
-          onClose={() => setOpen(false)}
-          PaperProps={{ sx: { width: drawerWidth, bgcolor: "white" } }}
-        >
-          {sidebar}
-        </Drawer>
-      )}
+    <Box sx={{ display: "flex", minHeight: "100vh", bgcolor: "#F8FAFC" }}>
+      {/* Sidebar container */}
+      <Box
+        component="nav"
+        sx={{
+          width: { md: drawerWidth },
+          flexShrink: { md: 0 },
+        }}
+      >
+        {isMdUp ? (
+          <Drawer
+            variant="permanent"
+            open
+            sx={{
+              "& .MuiDrawer-paper": {
+                width: drawerWidth,
+                boxSizing: "border-box",
+                borderRight: "1px solid rgba(15,23,42,0.08)",
+                bgcolor: "white",
+                boxShadow: "4px 0 24px rgba(15,23,42,0.04)",
+              },
+            }}
+          >
+            {sidebar}
+          </Drawer>
+        ) : (
+          <Drawer
+            variant="temporary"
+            open={open}
+            onClose={() => setOpen(false)}
+            ModalProps={{ keepMounted: true }}
+            sx={{
+              "& .MuiDrawer-paper": {
+                width: drawerWidth,
+                boxSizing: "border-box",
+                bgcolor: "white",
+              },
+            }}
+          >
+            {sidebar}
+          </Drawer>
+        )}
+      </Box>
 
-      {/* Main */}
-      <Box sx={{ flex: 1, overflowX: "hidden" }}>
+      {/* Main content */}
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          width: { md: `calc(100% - ${drawerWidth}px)` },
+          minWidth: 0, // IMPORTANT: prevents overflow/horizontal scroll
+        }}
+      >
         <AppBar
           position="sticky"
           elevation={0}
@@ -169,21 +189,21 @@ export default function DashboardLayout(props: {
             borderBottom: "1px solid rgba(15,23,42,0.08)",
           }}
         >
-          <Toolbar sx={{ gap: 1, overflowX: "hidden" }}>
+          <Toolbar sx={{ gap: 1 }}>
             {!isMdUp && (
               <IconButton onClick={() => setOpen(true)}>
                 <MenuIcon />
               </IconButton>
             )}
 
-            <Stack sx={{ flex: 1, minWidth: 0 }}>
+            <Stack sx={{ flex: 1 }}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <InsightsIcon color="primary" />
-                <Typography sx={{ fontWeight: 900 }} noWrap>
+                <Typography sx={{ fontWeight: 900 }}>
                   Tweet Sentiment Analytics
                 </Typography>
               </Stack>
-              <Typography variant="caption" color="text.secondary" noWrap>
+              <Typography variant="caption" color="text.secondary">
                 Horizon-style dashboard UI
               </Typography>
             </Stack>
@@ -197,7 +217,7 @@ export default function DashboardLayout(props: {
             p: { xs: 2, md: 3 },
             maxWidth: 1400,
             mx: "auto",
-            overflowX: "hidden", // ✅ stop content overflow
+            minWidth: 0, // IMPORTANT: prevents child overflow
           }}
         >
           {props.children}
