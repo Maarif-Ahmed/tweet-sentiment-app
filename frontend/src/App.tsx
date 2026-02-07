@@ -14,6 +14,8 @@ import {
   IconButton,
   Tooltip,
   Divider,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 
 import Grid from "@mui/material/Grid";
@@ -46,7 +48,58 @@ function sentimentChipColor(
   return "default";
 }
 
+function ChartShell(props: {
+  children: React.ReactNode;
+  minWidth?: number;
+  refEl?: React.RefObject<HTMLDivElement | null>;
+}) {
+  // A responsive wrapper that:
+  // - fills width on mobile
+  // - allows horizontal scroll if chart needs more room
+  // - avoids overflow breaking layout
+  return (
+    <Box
+      ref={props.refEl as any}
+      sx={{
+        width: "100%",
+        bgcolor: "white",
+        borderRadius: 2,
+        overflowX: "auto",
+        overflowY: "hidden",
+        WebkitOverflowScrolling: "touch",
+      }}
+    >
+      <Box sx={{ minWidth: props.minWidth ?? 0 }}>{props.children}</Box>
+    </Box>
+  );
+}
+
+function GridShell(props: { children: React.ReactNode; height: number }) {
+  // DataGrid wrapper that stays responsive and scrollable
+  return (
+    <Box
+      sx={{
+        width: "100%",
+        height: props.height,
+        overflow: "hidden",
+        // Let the grid handle horizontal scroll without breaking page
+        "& .MuiDataGrid-main": { overflow: "auto" },
+      }}
+    >
+      {props.children}
+    </Box>
+  );
+}
+
 export default function App() {
+  const theme = useTheme();
+  const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
+  const isMdDown = useMediaQuery(theme.breakpoints.down("md"));
+
+  const chartH = isSmDown ? 240 : 320;
+  const chartH2 = isSmDown ? 220 : 300;
+  const tableH = isSmDown ? 380 : 520;
+
   const [active, setActive] = useState<NavKey>("single");
   const [meta, setMeta] = useState<Meta | null>(null);
 
@@ -185,7 +238,6 @@ export default function App() {
     }));
   }, [explore]);
 
-  // Useful counts (avoid % in UI)
   const exploreCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const d of explorerDist) m.set(String(d.label), Number(d.value));
@@ -196,7 +248,6 @@ export default function App() {
     };
   }, [explorerDist]);
 
-  // Derived: entity sentiment score
   const entityScores = useMemo(() => {
     if (!explore) return [];
     const map = new Map<string, { pos: number; neg: number; neu: number }>();
@@ -211,7 +262,7 @@ export default function App() {
 
     const out = Array.from(map.entries()).map(([entity, v]) => {
       const total = v.pos + v.neg + v.neu || 1;
-      const score = (v.pos - v.neg) / total; // -1..1
+      const score = (v.pos - v.neg) / total;
       return { entity, ...v, total, score };
     });
 
@@ -243,6 +294,7 @@ export default function App() {
     }),
     [topPositiveEntities]
   );
+
   const topNegBar = useMemo(
     () => ({
       labels: topNegativeEntities.map((x) => x.entity),
@@ -272,22 +324,25 @@ export default function App() {
     entities.forEach((e) => map.set(e, { Negative: 0, Neutral: 0, Positive: 0 }));
     explore.mix.forEach((m) => (map.get(m.entity)![m.sentiment] = m.count));
 
-    return {
-      x: entities,
-      neg: entities.map((e) => map.get(e)!.Negative),
-      neu: entities.map((e) => map.get(e)!.Neutral),
-      pos: entities.map((e) => map.get(e)!.Positive),
-    };
-  }, [explore]);
+    // On small screens, too many labels will smash. Keep top N if needed.
+    const maxEntities = isSmDown ? 10 : entities.length;
+    const x = entities.slice(0, maxEntities);
 
-  // Sentiment index: (-1 .. +1) derived from counts
+    return {
+      x,
+      neg: x.map((e) => map.get(e)!.Negative),
+      neu: x.map((e) => map.get(e)!.Neutral),
+      pos: x.map((e) => map.get(e)!.Positive),
+    };
+  }, [explore, isSmDown]);
+
   const sentimentIndex = useMemo(() => {
     if (!explore) return 0;
     const neg = exploreCounts.Negative;
     const neu = exploreCounts.Neutral;
     const pos = exploreCounts.Positive;
     const denom = neg + neu + pos || 1;
-    return (pos - neg) / denom; // -1..1
+    return (pos - neg) / denom;
   }, [explore, exploreCounts]);
 
   const leaderboardRows = useMemo(() => {
@@ -337,7 +392,6 @@ export default function App() {
     }));
   }, [batchPredRows]);
 
-  // Percentages ONLY when multiple tweets (batch)
   const batchPercents = useMemo(() => {
     const total = batchPredRows.length || 0;
     if (total <= 1) return [];
@@ -353,18 +407,18 @@ export default function App() {
   // ---------- Columns ----------
   const leaderboardCols: GridColDef[] = useMemo(
     () => [
-      { field: "entity", headerName: "Entity", flex: 1, minWidth: 220 },
-      { field: "mentions", headerName: "Mentions", width: 140 },
+      { field: "entity", headerName: "Entity", flex: 1, minWidth: 180 },
+      { field: "mentions", headerName: "Mentions", width: 120 },
     ],
     []
   );
 
   const sampleCols: GridColDef[] = useMemo(
     () => [
-      { field: "tweet_id", headerName: "Tweet ID", width: 140 },
-      { field: "entity", headerName: "Entity", width: 160 },
-      { field: "sentiment", headerName: "Sentiment", width: 140 },
-      { field: "text", headerName: "Text", flex: 1, minWidth: 420 },
+      { field: "tweet_id", headerName: "Tweet ID", width: 120 },
+      { field: "entity", headerName: "Entity", width: 140 },
+      { field: "sentiment", headerName: "Sentiment", width: 120 },
+      { field: "text", headerName: "Text", flex: 1, minWidth: 320 },
     ],
     []
   );
@@ -378,7 +432,7 @@ export default function App() {
         field: k,
         headerName: k,
         flex: k === "text" ? 1 : 0.6,
-        minWidth: k === "text" ? 420 : 140,
+        minWidth: k === "text" ? 360 : 140,
       }));
   }, [batchPredRows]);
 
@@ -495,7 +549,7 @@ export default function App() {
           {active === "explorer" && (
             <ErrorBoundary>
               <Grid container spacing={2.2}>
-                {/* Filters + Search */}
+                {/* Filters */}
                 <Grid size={{ xs: 12 }}>
                   <Paper sx={{ p: 2.4 }}>
                     <CardHeader
@@ -557,7 +611,6 @@ export default function App() {
                           label="Keyword (server filter)"
                           value={keyword}
                           onChange={(e) => setKeyword(e.target.value)}
-                          placeholder="Filters server-side…"
                         />
                       </Grid>
 
@@ -600,7 +653,6 @@ export default function App() {
                           label="Search (local)"
                           value={localSearch}
                           onChange={(e) => setLocalSearch(e.target.value)}
-                          placeholder="Search tables instantly…"
                         />
                       </Grid>
                     </Grid>
@@ -630,35 +682,35 @@ export default function App() {
 
                 {explore && (
                   <>
-                    {/* KPI cards (NO % displayed) */}
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    {/* KPIs */}
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                       <StatCard
                         label="Rows (filtered)"
                         value={explore.total_rows.toLocaleString()}
                         hint="records in view"
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                       <StatCard
                         label="Top entity"
                         value={explore.top_entity || "—"}
                         hint="most frequent topic"
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                       <StatCard
                         label="Neutral count"
                         value={exploreCounts.Neutral.toLocaleString()}
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                       <StatCard
                         label="Positive count"
                         value={exploreCounts.Positive.toLocaleString()}
                       />
                     </Grid>
 
-                    {/* Charts Row 1 */}
+                    {/* Charts row 1 */}
                     <Grid size={{ xs: 12, md: 5 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
@@ -680,16 +732,16 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <Box ref={distRef} sx={{ bgcolor: "white", borderRadius: 2 }}>
+                        <ChartShell refEl={distRef} minWidth={isSmDown ? 360 : 0}>
                           {explorerDist.length ? (
                             <PieChart
-                              height={320}
-                              series={[{ data: explorerDist, innerRadius: 78 }]}
+                              height={chartH}
+                              series={[{ data: explorerDist, innerRadius: isSmDown ? 56 : 78 }]}
                             />
                           ) : (
                             <Alert severity="info">No data.</Alert>
                           )}
-                        </Box>
+                        </ChartShell>
                       </Paper>
                     </Grid>
 
@@ -714,44 +766,38 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <Box
-                          ref={topEntitiesRef}
-                          sx={{ bgcolor: "white", borderRadius: 2 }}
-                        >
+                        <ChartShell refEl={topEntitiesRef} minWidth={isSmDown ? 620 : 0}>
                           {topEntitiesBar.labels.length ? (
                             <BarChart
-                              height={320}
+                              height={chartH}
                               xAxis={[
-                                { scaleType: "band", data: topEntitiesBar.labels },
+                                {
+                                  scaleType: "band",
+                                  data: topEntitiesBar.labels,
+                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
+                                },
                               ]}
-                              series={[
-                                { data: topEntitiesBar.values, label: "Mentions" },
-                              ]}
+                              series={[{ data: topEntitiesBar.values, label: "Mentions" }]}
                             />
                           ) : (
-                            <Alert severity="info">
-                              No entities available for this filter.
-                            </Alert>
+                            <Alert severity="info">No entities available.</Alert>
                           )}
-                        </Box>
+                        </ChartShell>
                       </Paper>
                     </Grid>
 
-                    {/* Charts Row 2 */}
+                    {/* Charts row 2 */}
                     <Grid size={{ xs: 12, md: 7 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
                           title="Entity Sentiment Mix"
-                          subtitle="Stacked breakdown (top entities)"
+                          subtitle="Stacked breakdown"
                           right={
                             <Tooltip title="Export PNG">
                               <IconButton
                                 onClick={() =>
                                   mixRef.current &&
-                                  exportRefToPng(
-                                    mixRef.current,
-                                    "entity_sentiment_mix.png"
-                                  )
+                                  exportRefToPng(mixRef.current, "entity_sentiment_mix.png")
                                 }
                               >
                                 <ImageIcon />
@@ -759,11 +805,17 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <Box ref={mixRef} sx={{ bgcolor: "white", borderRadius: 2 }}>
+                        <ChartShell refEl={mixRef} minWidth={isSmDown ? 760 : 0}>
                           {explorerMix.x.length ? (
                             <BarChart
-                              height={320}
-                              xAxis={[{ scaleType: "band", data: explorerMix.x }]}
+                              height={chartH}
+                              xAxis={[
+                                {
+                                  scaleType: "band",
+                                  data: explorerMix.x,
+                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
+                                },
+                              ]}
                               series={[
                                 { label: "Negative", data: explorerMix.neg, stack: "a" },
                                 { label: "Neutral", data: explorerMix.neu, stack: "a" },
@@ -773,7 +825,7 @@ export default function App() {
                           ) : (
                             <Alert severity="info">No mix data.</Alert>
                           )}
-                        </Box>
+                        </ChartShell>
                       </Paper>
                     </Grid>
 
@@ -781,20 +833,27 @@ export default function App() {
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader title="WordCloud" subtitle={`From: ${wcSentiment}`} />
                         {explore.wordcloud_png_base64 ? (
-                          <img
-                            alt="wordcloud"
-                            style={{
+                          <Box
+                            sx={{
                               width: "100%",
-                              borderRadius: 14,
+                              overflow: "hidden",
+                              borderRadius: 2,
                               border: "1px solid rgba(15,23,42,0.10)",
-                              background: "white",
+                              bgcolor: "white",
                             }}
-                            src={`data:image/png;base64,${explore.wordcloud_png_base64}`}
-                          />
+                          >
+                            <img
+                              alt="wordcloud"
+                              style={{
+                                width: "100%",
+                                height: "auto",
+                                display: "block",
+                              }}
+                              src={`data:image/png;base64,${explore.wordcloud_png_base64}`}
+                            />
+                          </Box>
                         ) : (
-                          <Alert severity="info">
-                            Not enough text to generate wordcloud.
-                          </Alert>
+                          <Alert severity="info">Not enough text to generate wordcloud.</Alert>
                         )}
 
                         <Divider sx={{ my: 2 }} />
@@ -812,21 +871,18 @@ export default function App() {
                       </Paper>
                     </Grid>
 
-                    {/* Positive/Negative entity charts */}
+                    {/* Positive/Negative charts */}
                     <Grid size={{ xs: 12, md: 6 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
                           title="Most Positive Entities"
-                          subtitle="Score: (pos−neg)/total"
+                          subtitle="Score (×100)"
                           right={
                             <Tooltip title="Export PNG">
                               <IconButton
                                 onClick={() =>
                                   posRef.current &&
-                                  exportRefToPng(
-                                    posRef.current,
-                                    "most_positive_entities.png"
-                                  )
+                                  exportRefToPng(posRef.current, "most_positive_entities.png")
                                 }
                               >
                                 <ImageIcon />
@@ -834,17 +890,23 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <Box ref={posRef} sx={{ bgcolor: "white", borderRadius: 2 }}>
+                        <ChartShell refEl={posRef} minWidth={isSmDown ? 620 : 0}>
                           {topPosBar.labels.length ? (
                             <BarChart
-                              height={300}
-                              xAxis={[{ scaleType: "band", data: topPosBar.labels }]}
-                              series={[{ data: topPosBar.values, label: "Score (×100)" }]}
+                              height={chartH2}
+                              xAxis={[
+                                {
+                                  scaleType: "band",
+                                  data: topPosBar.labels,
+                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
+                                },
+                              ]}
+                              series={[{ data: topPosBar.values, label: "Score" }]}
                             />
                           ) : (
                             <Alert severity="info">Not enough entities.</Alert>
                           )}
-                        </Box>
+                        </ChartShell>
                       </Paper>
                     </Grid>
 
@@ -852,16 +914,13 @@ export default function App() {
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader
                           title="Most Negative Entities"
-                          subtitle="Score: (pos−neg)/total"
+                          subtitle="Score (×100)"
                           right={
                             <Tooltip title="Export PNG">
                               <IconButton
                                 onClick={() =>
                                   negRef.current &&
-                                  exportRefToPng(
-                                    negRef.current,
-                                    "most_negative_entities.png"
-                                  )
+                                  exportRefToPng(negRef.current, "most_negative_entities.png")
                                 }
                               >
                                 <ImageIcon />
@@ -869,17 +928,23 @@ export default function App() {
                             </Tooltip>
                           }
                         />
-                        <Box ref={negRef} sx={{ bgcolor: "white", borderRadius: 2 }}>
+                        <ChartShell refEl={negRef} minWidth={isSmDown ? 620 : 0}>
                           {topNegBar.labels.length ? (
                             <BarChart
-                              height={300}
-                              xAxis={[{ scaleType: "band", data: topNegBar.labels }]}
-                              series={[{ data: topNegBar.values, label: "Score (×100)" }]}
+                              height={chartH2}
+                              xAxis={[
+                                {
+                                  scaleType: "band",
+                                  data: topNegBar.labels,
+                                  tickLabelStyle: { angle: isSmDown ? -45 : 0 },
+                                },
+                              ]}
+                              series={[{ data: topNegBar.values, label: "Score" }]}
                             />
                           ) : (
                             <Alert severity="info">Not enough entities.</Alert>
                           )}
-                        </Box>
+                        </ChartShell>
                       </Paper>
                     </Grid>
 
@@ -887,39 +952,38 @@ export default function App() {
                     <Grid size={{ xs: 12, md: 5 }}>
                       <Paper sx={{ p: 2.4 }}>
                         <CardHeader title="Leaderboard" subtitle="Top entities (mentions)" />
-                        <Box sx={{ height: 520 }}>
+                        <GridShell height={tableH}>
                           <DataGrid
                             rows={filteredLeaderboardRows}
                             columns={leaderboardCols}
                             disableRowSelectionOnClick
-                            pageSizeOptions={[10, 20, 50]}
+                            pageSizeOptions={isSmDown ? [10, 20] : [10, 20, 50]}
                             initialState={{
-                              pagination: { paginationModel: { pageSize: 20, page: 0 } },
+                              pagination: { paginationModel: { pageSize: isSmDown ? 10 : 20, page: 0 } },
                             }}
-                            slots={{ toolbar: GridToolbar as any }}
+                            density={isSmDown ? "compact" : "standard"}
+                            slots={{ toolbar: isSmDown ? undefined : (GridToolbar as any) }}
                           />
-                        </Box>
+                        </GridShell>
                       </Paper>
                     </Grid>
 
                     <Grid size={{ xs: 12, md: 7 }}>
                       <Paper sx={{ p: 2.4 }}>
-                        <CardHeader
-                          title="Sample Rows"
-                          subtitle="Searchable preview (local search applies)"
-                        />
-                        <Box sx={{ height: 520 }}>
+                        <CardHeader title="Sample Rows" subtitle="Searchable preview" />
+                        <GridShell height={tableH}>
                           <DataGrid
                             rows={filteredSampleRows}
                             columns={sampleCols}
                             disableRowSelectionOnClick
-                            pageSizeOptions={[10, 25, 50, 100]}
+                            pageSizeOptions={isSmDown ? [10, 25] : [10, 25, 50, 100]}
                             initialState={{
-                              pagination: { paginationModel: { pageSize: 25, page: 0 } },
+                              pagination: { paginationModel: { pageSize: isSmDown ? 10 : 25, page: 0 } },
                             }}
-                            slots={{ toolbar: GridToolbar as any }}
+                            density={isSmDown ? "compact" : "standard"}
+                            slots={{ toolbar: isSmDown ? undefined : (GridToolbar as any) }}
                           />
-                        </Box>
+                        </GridShell>
                       </Paper>
                     </Grid>
                   </>
@@ -994,19 +1058,16 @@ export default function App() {
                       <CardHeader
                         title="Distribution"
                         subtitle="Predicted sentiment breakdown"
-                        right={
-                          <Chip
-                            label={`${batchPredRows.length} rows`}
-                            variant="outlined"
-                          />
-                        }
-                      />
-                      <PieChart
-                        height={320}
-                        series={[{ data: batchDist, innerRadius: 78 }]}
+                        right={<Chip label={`${batchPredRows.length} rows`} variant="outlined" />}
                       />
 
-                      {/* ONLY multi-tweet shows % */}
+                      <ChartShell minWidth={isSmDown ? 360 : 0}>
+                        <PieChart
+                          height={chartH}
+                          series={[{ data: batchDist, innerRadius: isSmDown ? 56 : 78 }]}
+                        />
+                      </ChartShell>
+
                       {batchPercents.length > 0 && (
                         <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
                           {batchPercents.map((x) => (
@@ -1019,12 +1080,7 @@ export default function App() {
                         </Stack>
                       )}
 
-                      <Button
-                        sx={{ mt: 1.5 }}
-                        fullWidth
-                        variant="outlined"
-                        onClick={downloadCSV}
-                      >
+                      <Button sx={{ mt: 1.5 }} fullWidth variant="outlined" onClick={downloadCSV}>
                         Download CSV
                       </Button>
                     </Paper>
@@ -1033,17 +1089,18 @@ export default function App() {
                   <Grid size={{ xs: 12, md: 8 }}>
                     <Paper sx={{ p: 2.4 }}>
                       <CardHeader title="Preview" subtitle="First 200 rows" />
-                      <Box sx={{ height: 520 }}>
+                      <GridShell height={tableH}>
                         <DataGrid
                           rows={batchPredRows.slice(0, 200)}
                           columns={batchCols}
                           disableRowSelectionOnClick
-                          pageSizeOptions={[25, 50, 100]}
+                          pageSizeOptions={isSmDown ? [10, 25] : [25, 50, 100]}
                           initialState={{
-                            pagination: { paginationModel: { pageSize: 25, page: 0 } },
+                            pagination: { paginationModel: { pageSize: isSmDown ? 10 : 25, page: 0 } },
                           }}
+                          density={isSmDown ? "compact" : "standard"}
                         />
-                      </Box>
+                      </GridShell>
                     </Paper>
                   </Grid>
                 </>
